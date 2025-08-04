@@ -236,6 +236,7 @@ No reason to remember all these (and probably know anyways), just need to know t
 
 # Route 53
 * Only 100% available SLA AWS Service
+* Understand TTL
 * Must know A, AAAA (same as A but IPv6), CNAME and NS for exam, other records not so much
 * Pay $.50/mo per hosted zone (aka not free)
 * Public Zone is for the internet, Private zone is inter-VPC (1 or more) only
@@ -296,4 +297,18 @@ No reason to remember all these (and probably know anyways), just need to know t
       * Used to i.e. perform maint on website without causing ALL healthchecks to fail
     * CloudWatch Metric
       * Used to check health of private AWS resources sense health checkers are public only
-
+* Route 53 Resolvers
+  * Used to do internal lookups of IP's for use across VPN's or Direct Connect between AWS and on-prem
+  * (Inbound) Internal DNS servers can forward to a Route 53 resolver if the DNS suffix matches something specific and the resolver will return the internal IP's of the resources instead of having to use public DNS entries
+  * (Outbound) same as Inbound but in reverse
+  * Allows for more security than putting private IP and DNS entries into public Route 53 (i.e. for connections over the VPN)
+  * Allows for split horizon DNS (internal DNS give IP, public gives another for the same resource)
+  * Resolver Rules
+    * Conditional Forwarding Rules (Forwarding Rules) - Specific domain/sub-domain to target IP addresses
+    * System Rules - overrides subdomain set by conditional forwarding rules
+      * i.e. conditional forward rules says *.example.com go here, but you can set *.test.example.com goes here
+    * Auto-definied System Rules - AWS internal domain names, Private Hosted Zones
+    * If multiple matches, Route 53 Resolve picks most specific match
+    * Resolver Rules can be shared across accounts using AWS Resource Access Manager (RAM)
+      * Allows central management of DNS queries from multiple VPC's to target IP
+      

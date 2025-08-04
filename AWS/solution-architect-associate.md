@@ -1,4 +1,4 @@
-# Buck's AWS Solutions Architect - Associate Notes
+# AWS Solutions Architect - Associate Notes
 
 Skipping most basic basic stuff that if you've used AWS for a bit then you probably know or Cloud Practioner stuff
 

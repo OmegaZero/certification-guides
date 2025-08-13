@@ -312,3 +312,391 @@ No reason to remember all these (and probably know anyways), just need to know t
     * Resolver Rules can be shared across accounts using AWS Resource Access Manager (RAM)
       * Allows central management of DNS queries from multiple VPC's to target IP
       
+# S3
+* Object key is the full path to the files, there is no real directories, it's just that the key is the `prefix` (which can contain `/`) + the file name.
+* Naming convention
+  * No uppercase, no underscore
+  * Not an IP
+  * Must start with lowercase letter
+  * MUST NOT start with the fredix xn--
+  * MUST NOT end with suffix -s3alias
+* Max size of object is 5TB
+* If more then 5GB then it must be a multi-part upload
+* Each object has metadata, tags and version ID
+* Bucket Access Security
+  * Policies
+    * Types
+      * User-based - specific user
+      * Resource-based
+        * Bucket Policies - bucket wide
+          * most common
+          * Uses JSON that has following fields:
+            * Resources - the bucket and objects that the policy applies to
+            * Effect - Allow / Deny
+            * Principal - The account or user to apply the policy to
+          * Used for:
+            * Make bucket public
+            * Force objects to be encrypted at upload
+            * Grant access to another account (cross account)
+        * Object Access Control List (ACL) - finer grain (can be disabled)
+        * Bucket Access Control List (ACL) - less common (can be disabled)
+    * IAM principal can access if user OR resource policy allows AND there is no deny
+  * Bucket Setting for `Block Public Access`
+    * Can block all public access; overrides bucket policies
+    * Can be set at the account level (applies to all buckets on account)
+* Versioning
+  * Bucket level which uses keys from version (1, 2, 3, etc)
+  * Can be enabled/disabled at any time
+    * Enabling - if versioning was not on, previous version #'s will be `null`
+    * Disabling - safe to do, does not delete previous versions
+  * Once versioning is enabled for the bucket:
+    * To restore a previous version, you must select the `Show versions` option in the GUI, then select the newer version of the file and permanently delete it, this will make the last verion the current version. 
+    * To create a delete marker (file is "hidden" as it is marked for deletion) turn off the `Show versions` option in the GUI and then delete the object (not it will NOT say permanently delete).  To undelete it you must turn on the `Show versions` option and delete the delete marker. Delete marker files will not show up if `Show versions` option is disabled.
+* Replication
+  * You can do Cross region replication (CRR) or Same region replication (SRR)
+  * MUST enabled versioning on both source and destination buckets
+  * Buckets can be in diffeent AWS accounts
+  * Copy is async
+  * Must give permissions to S3 for copying
+  * Objects maintain the same Version ID in the destination bucket upon repl
+  * Only NEW objects can be replicated after replication is enabled
+    * If you need to replicate existing objects, you need to use S3 Batch Replication
+  * You can replicate delete markers (optional)
+  * Permanent deletions of items with the version id are never replicated
+  * You cannot "chain" replication (i.e. Bucket 1 --> Bucket 2 --> Bucket 3, Bucket 3 would not get Bucket 1 objects)
+* Storage
+  * Durability - all storage classes have the same durability (99.999999999% SLA), very low chance of losing objects
+  * Availibility - varies depending on class
+  * Should know all the storage classes like on the Cloud Practitioner exam, they are below in case:
+    * S3 Standard - For normal high throughput, high avail stuff
+    * S3 Standard IA (Infrequent Access) - For less frequent access, use for backups
+    * S3 One Zone IA - Only in single AZ, all data lost if AZ is destroyed, use for secondary backup or data that can be easily recreated
+    * S3 Glacier Instant Retrieval - millisecond retrieval, must keep data for min 90 days
+    * S3 Glacier Flexible Retrieval - 1-5 minutes for expedited retrieval ($$), 3-5 hours for standard ($), 5-12 hours for Bulk (free). Minimum 90 days storage
+    * S3 Glacier Deep Archive - Stadard Retrieval ($$) 12 Hours, Bulk ($) 48 hours. Min Storage of 180 days
+    * S3 Intelligent-Tiering
+      * Moves objects automatically between access tiers based on usage
+      * Small monthly monitoring and auto-tiering fee
+      * No retrieval charges
+      * Tiers
+        * Frequent Access (auto) - default
+        * IA (auto) - objects not accessed for 30 days
+        * Archive Instant Access (auto) - objects not access for 90 days
+        * Archive Access (optional) - configurable from 90 - 700+ days
+        * Deep Archives Access (optional) - configurable from 180 - 700+ days
+  * Lifecycle rules can be configured to move objects between tiers based on days after object creation
+    * You can also delete incomplete multi-part uploads, old version of files or access files (after 365 fays)
+    * You can do rules by prefix and/or by tag as well
+  * S3 Storage Analytics can analyze objects and give recommendations on when to transition objects to different classes. 
+    * It only works for `Standard` and `Standard IA`. 
+    * Report updated daily
+    * 24-48 hours after enabling to start seeing data analysis
+* S3 Requester Pays
+  * The requester of the object pays to download the file, not the bucket owner
+  * Must be authenticated with AWS, not anonymous (so AWS knows how to bill them)
+* Event Notifications (fire Lamba, send SNS, send to SQS, send to EventBridge)
+  * Object name filtering available (i.e. *.jpg only)
+  * Typically event notification in seconds, but sometimes can be a minute or more
+  * IAM Permissions must be defined on the event target, not on S3
+  * Eventbridge (newer) allows to send to over 18 AWS services
+    * Allows further filtering via JSON rules (metadata, object_size, etc.)
+    * Can send to multiple destinations at once
+    * Can Archive, Replay Events, reliable delivery
+* S3 Performance
+  * Up to 3,500 request/sec PUT/COPY/POST/DELETE and 5,500 requests/sec GET/HEAD per prefix
+    * So if you have four files spread across four prefixes (i.e. /1/*. /2/*, /3/*, /4/*) you could get up to 22,000 GET/HEAD requests/sec
+  * Multi-part upload recommended for > 100MB, required for > 5GB
+    * Can parallelize
+  * S3 Transfer Acceleration
+    * Transfer to edger location and then forwarded to bucket region
+    * Compatible with multi-part upload
+    * Faster as it spends less time going through the internet
+  * Byte-Range Fetches
+    * Can request GETs by specific byte range to split up file
+      * Can parallelize download to speed up download
+      * Can help with failures of a specific part (instead of downloading entire thing again)
+      * Can just get specific part of file i.e. if you just need header and know header is in first 100 bytes, just request that
+* S3 Batch Operations
+  * Perform bulk operations on existing S3 objects
+    * Modify object metadata, copy objects to other buckets, encrypt un-encrypted objects, modify ACL's and tags, restore objects from S3 Glacier, invoke Lambda for custom function
+    * A job consists of list of object, the action to perform and optional parameters
+    * Manages retires, tracks progress, sends completion notifications, generates reports,
+    * S3 Inventory to get objects --> use Athena to query and filter your objects --> S3 Batch
+* S3 Storage Lens
+  * Analyze/optimize storage acorss entire AWS Organization
+  * Find anomalies, identifiy cost efficiencies, apply data protection best practices,
+  * Can aggregate data for Org, specific accounts, regions, buckets or prefixes
+  * Default or make your own dashboard
+    * Default dashboard 
+      * Shows free and advanced metric
+      * Can't be deleted but can be disabled
+      * Shows Multi-Region and Multi-Account data
+  * Can export metrics daily to S3 (CSV, Parquet)
+  * Metrics (don't need to know metric names, just examples for what metric is for)
+    * Summary
+      * i.e. StorageBytes, ObjectCount. 
+      * Used to find fast growing or not used buckets/prefixes
+    * Cost Optimization
+      * i.e - NonCurrentVersionStorageBytes, IncompleteMultipartUploadStorageBytes. 
+      * Used to find cost savings
+    * Data protection
+      * i.e - VersioningEnabledBuckCount, CrossRegionReplicationRuleCount, etc. 
+      * Used to identify buckets that aren't following data protection best practices
+    * Access management
+      * i.e. - ObjectOwnershipBucketOwnerEnforceBucketCount
+      * Identify Object Ownership settings for buckets in use
+    * Event 
+      * i.e. - EventNotificationEnabledBucetCount
+      * user case: identify which buckets have event notifications enabled
+    * Performance
+      * i.e. - TransferAccelerationEnabledBucketCount
+      * use case - identify which buckets have S3 Transfer Acceleration enabled
+    * Activity 
+      * i.e. AllRequests, GetRequests, PutRequests, etc.
+      * user case: get insights on how storage is requested
+    * Detailed Status Code
+      * i.e. - 200OKStatusCount, 403ForbiddenErrorCount, etc.
+      * Insights by status code
+  * Free vs Advanced
+    * Free
+      * 28 metrics
+      * Last 14 days
+    * Advanced
+      * Advanced Metrics: Activity, Advanced Cost Optimization, Advanced Data Protection, Status Code
+      * CloudWatch Publishing - Can view Lens metrics in CloudWatch (no extra charge)
+      * Prefix Aggregation - Collect metrics at prefix level
+      * Last 15 months
+* Security
+  * Encryption
+    * Server side (SSE)
+      * Amazon managed S3 KMS keys - enabled by default for new objects and new buckets (SSE-S3)
+        * AES-256
+        * Must set header x-amz-server-side-encryption: "AWS256"
+      * KMS Keys stored in AWS KMS (SSE-KMS)
+        * Can audit key in CloudTrail and user controls key creation
+        * Must set header x-amz-server-side-encryption: "AWS:kms"
+        * Limitations
+          * KMS Service limitations as every upload called `GenerateDataKey` KMS API
+          * 5500/10000/30000 requests/s depending on region
+          * Can request increase in the Service Quotes Console
+      * Customer Provided Keys (fully managed by customer)
+        * Amazon S3 does not store encryption keys
+        * HTTPS must be used
+        * Encryption key is supplied in HTTP header for every HTTP request
+      * DSSE-KMS - Double encryption based on KMS *NEW OPTION, PROBABLY NOT ON TEST YET*
+    * Client side 
+      * Client has to encrypt/decrypt data before/after sending to S3
+      
+    * Encryption in transit is done via SSL/TLS. You can disable HTTP by setting the policy `aws:SecureTransport: "false"`
+    * You can set bucket policies to refuse API calls to S3 unless they have encryption headers for SSE-KMS or SSE-C, this will "force encryption"
+    * Bucket policies are evaluated BEFORE S3 encryption
+  * CORS **Most likely will be on the test, very popular question for the exam**
+    * Bucket level setting (permissions tab)
+    * Origin = protocol + host + port
+      * Same origin: http://www.example.com/app1 and http://www.example.com/app2
+      * different origin: http://www.example.com/ and http://other.example.com
+    * Web browser security to allow content from one website (i.e. http://www.example.com/index.html) access to content on another website (http://pics.example.com/image.png)
+      * This occurs by a preflight request to the "other" website, that website will send back it's CORS headers and if the first origin is allowed then the browser will be allowed
+    * You can specify an origin or ALL origins with `*`
+  * MFA Delete
+    * Force users to MFA before doing important operations in S3. Import operations:
+      * Permanently delete an object versions
+      * SuspendVersioning on the bucket
+    * Versioning MUST be enabled on the bucket to enabled MFA Delete
+    * Only the root account can enable/disable MFA Delete
+    * Currently can only enable/disable and do deletes via CLI
+  * Logging
+    * Access logs will log all authorized or denied access from any account into another S3 bucket
+      * The target for logging bucket must be in the same AWS region
+    * Never set the logging bucket to the same bucket as you want access logged as it will infinitely loop!
+  * Pre-signed URLs - temporary access to files
+    * URL expiration
+      * S3 Console - 1 minute up to 720 mins (12 hours)
+      * AWS CLI - defalt 3600 seconds, max 604800 seconds (168 hours)
+    * When you generate a URL, the URL will grant the permissions of the user that generated the URL for Get/PUT
+    * Examples:
+      * Allow only logged-in users access to download a premium video
+      * Allows constantly changing user list to download files
+      * Temporarily allow a user to upload a file to your private bucket
+  * S3 Glacier Vault Lock
+    * Write once, read many (WORM) model
+    * Once you set a lock policy, an object that is put into the glacier vault cannot be deleted by ANYBODY
+    * versioning must be enabled
+    * is set per object, set object to not be able to be deleted for a specified amount of time
+    * Retention mode - Compliance
+      * Objects cannot be overwritten or deleted by any user, including root
+      * Retention mode can't be changed, retention period can't be shorted
+    * Retention mode - Governance
+      * Some users have permissions to change retention or delete object
+    * Retention periods CAN be extended
+    * Legal Hold
+      * protect object indefinitely, independent from retention period
+      * User has S3:PutObjectLegalHold permissions to place or remove
+  * S3 Access Points
+    * Can set specific users/groups to have access to a prefix of a S3 bucket with specific permissions
+    * Simplifies security management
+    * Each access point has it's own DNS name and access policy
+    * You can set the access point to only be accessible within the VPC
+      * Must create a VPC endpoint to access the access point
+      * VPC Endpoint policy must allow access to the target bucket AND access point
+  * S3 Object Lambda - by using a S3 Access point you can use lambda to create a different version of the file (i.e. redact certain info, add to file) and then have a S3 Object Lambda Access Point to retrieve that changed file
+    
+# CloudFront
+* About
+  * CloudFront is a CDN (so if you hear CDN on exam, it's CloudFront)
+  * DDoS protection (because it's worldwide) and has Shield and AWS WAF
+  * 216 or more edge locations globally
+* Origins
+  * S3 bucket which is secured with Origin Access Control (OAC)
+  * VPC - applications hosting inside VPC's (ALB, NLB, EC2 instances)
+  * Custom Origin (HTTP) - S3 bucket as static website OR any public http backend
+* How it works
+  * Client connects to edge location
+  * Origin sends data to edge location through private AWS connection where it is cached locally
+* CloudFront vs S3 CRR
+  * Cloudfront 
+    * Works with ALL Edge locations
+    * Files are cached with a TTL
+    * Great for static content
+  * S3 CRR
+    * Must be setup per region
+    * Files updated in near real time
+    * Read only
+    * Grant for dynamic content that needs low-latency in a few regions
+* In order to allow CloudFront access to a VPC app, you should use a VPC Origin (new, more secure) which allows traffic to go through all private connections, not make the instance public (old way, less secure)
+* Geo Restriction is used to allow or block specific countries
+* Pricing
+  * Cost of data out per edge location varies
+  * Price class - All: All regions
+  * Price class - 200 - Most regions, skip most expensive regions
+  * Price class - 100 - Only least expensive regions
+* CloudFront Invalidations
+  * If back-end updates, CloudFront will not update until TTL expires
+  * Can force an entire (*) or partial (/images/*) CloudFront invalidation to bust cache
+
+# AWS Global Accelerator
+* Uses Anycast Public IP's (all servers have the same IP, but client is sent to closest one)
+* 2 Anycast Ip's are created for your app
+* Traffic is sent to Edge locations then through private AWS connection to your app
+* Works with Elastic IP, EC2 Instances, ALB, NLB, public or private
+* Health Checks - global health check fails over in less than 1 minute (makes it great for DR)
+* Security 
+  * Only 2 external IP's to be whitelisted
+  * DDoS protection with AWS Shield
+* Great for gaming servers, VoIP, IoY, things that require static IP, fast failover of faster performance of TCP/UDP
+
+### Difference between CloudFront and AWS Global Accelerator is that CloudFront serves from the edge location, GA is sending data through AWS backbone to your app directly which improves performance
+
+# AWS Snowball (aka Snow family)
+* Overview
+  * For edge computing or data migrations into the cloud
+  * Devices have same amount of RAM and vCPU
+    * Storage Optimized is 210TB
+    * Compute Optimized is 28TB
+  * Recommendation is that if it's going to take over a week to transfer data to AWS, you should use Snowball
+  * Can also be used for cases where there is no or low internet (i.e. - ship, underground)
+  * Can run EC2 instances or Lambda functions on the device to do computing at the edge.
+    * This allows you to do things like preprocess data, transcode media, etc.
+  * Snowball always imports directly into S3 once it is received by AWS.
+    * If you want to import into Glacier you need to set a S3 lifecycle policy on the S3 bucket that data is imported into
+
+# Amazon FSx
+* Allows third-party file systems on AWS
+* FSx for Windows
+  * Supports SMB, NTFS, Active Directory, ACLs, user quotes
+  * Can be mounted to Linux EC2 instances
+  * Can use MS Distributed File System (DFS) to group files across multiple FS (i.e. make visible on prem)
+  * Scale 10s of GB/s, millions of IOPS, 100s of PB of data
+  * SSH or FDD
+  * Can be configured for Multi-AZ for HA
+  * Can be configured to connect to in-prem with VPN or Direct Connect)
+  * Data backed up to S3 daily
+* FSx for Lustre
+  * Parallel distributed file system (Lustre = Linux + cluster) used for Machine Learning and **High Performance Computing (HPC)** *(if you see HPC on exam, it's talking about this)*
+  * Also used for video processing, financial modeling, electronic design automation
+  * SSD and HDD
+  * **Seamless integration with S3** (<--- may be on exam)
+  * Can "read S3" as a file system
+  * Can write the output of computations back to S3 (through FSx)
+  * Deployment Options:
+    * Scratch File System
+      * Temporary Storage
+      * Data not replicated (lost if FS fails)
+      * High speed (6x's faster)
+      * Use: short term processing or to optimize costs
+    * Persistent File System
+      * Long term storage
+      * Data replicated within same AZ - Replace failed files in minutes
+      * Usage: Long term processing, sensitive data
+* FSx on NetApp ONTAP
+  * compatible with NFS, SMB, iSCSI
+  * for workloads running on ONTAP or NAS
+  * Broad compatibility - Works with Windows, Linux, MacOS, VMWareCloud on AWS, Amazon Workspaces & AppStream 2.0, EC2, ECS, EKS
+  * storage auto grows and shrinks
+  * snapshots, replication, low-cost, comporession and data de-dupe
+  * **Point-in-time instantaneous cloning** (helpful to testing new workloads)
+* FSx for OpenZFS
+  * compatible with NFS (v3, v4, v4.1, v4.2)
+  * move ZFS workloads to AWS
+  * Broad compatibility like FSX NetApp
+  * Up to 1 million IOPS with < .5ms latency
+  * Snapshots, compression, low-cost 
+    * DOES NOT have data de-dupe
+  * **Point-in-time instantaneous cloning** (helpful to testing new workloads)
+
+# Storage Gateway
+* Bridge between on-prem and cloud data
+* All gateways are install on-prem  in VM or in EC2 (except Volume, can't use EC2)
+* S3 File Gateway
+  * Allows NFS or SMB on prem to be translated to HTTPS calls to S3 buckets (can use whatever S3 type but not Glacier - use lifecycle rules for that)
+  * Most recently used data is cached in the file gateway
+  * GW bucket access via IAM permissions
+  * SMB can use Active Directory user auth
+* Volume Gateway
+  * block storage using iSCSI protocol backed by S3
+  * Volume types
+    * Cached - low latency to most recent data
+    * Stored - entire dataset on-prem, scheduled backup to S3
+  * Can make EBS snapshots to restore on-prem volumes
+* Tape Gateway
+  * backs up tapes using iSCSI Virtual Tap Library (VTL) to S3
+  * Backup data using existing tap infra, then data is copied to S3 
+  * works with leading backup software vendors
+
+# AWS Transfer Family
+* Used to FTP to AWS (all types)
+* Pay per provisioned endpoint per hour + data transfers in GB
+* Store and manage user credentials within service OR integrate with existing auth system (i.e. MS AD, LDAP, Okta, Cognito, custom)
+* Highly Available and Scalable
+* FTP to S3 or EFS
+
+# AWS DataSync
+* **Appearing a lot on exam recently**
+* For moving large amounts of data
+  * To AWS <--> on-prem or other clouds - needs agent
+  * AWS <--> AWS - no agent needed
+* Can sync data between S3, EFS, FSx
+* Repl tasks scheduled hourly, daily, weekly
+* **File permissions and metadata are preserved (NFS POSIX, SMB)** *Unique to this service if asked on exam!*
+* Agent can use up to 10Gbps, but bandwidth limit an be set
+* Can use AWS Snow Family to assist which has agent pre-installed on device
+
+### Differences when dealing with data syncing *(can be on exam)*
+* Data integration --> `Storage gateway` ( caching frequently accessed data on premises and stores archives in AWS)
+* Data migration --> `Data Sync` ( out and out a migration service used to migrate active and archive data in a scheduled manner)
+ 
+# Quick AWS Storage Overview
+* S3: Object Storage
+* S3 Glacier: Object Archival
+* EBS volume: Network storage for one EC2 instance at a time
+* Instance Storage: Physical storage for EC2 instance (high IOPS, low durability)
+* EFS: Network FS for Linux instances
+* FSx for Windows: Network FS for Windows
+* FSx for Lustre: High Performance Computing Linux FS
+* FSx for NetApp ONTAP: High OS Compability
+* FSx for OpenZFS: Managed ZFS FS
+* Storage Gateway: S3 and DSx File Gateway, Volume Gateway (cache & stored), Tape gateway
+* Transfer Family: FTPS interface on top of S3/EFS
+* DataSync: Schedule data sync from somewhere to AWS or AWS to AWS
+* Snow Family: Move large amounts of data to cloud through physical device
+* Database: for specific workloads, usually with indexing and querying

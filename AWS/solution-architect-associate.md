@@ -169,7 +169,7 @@ Skipping most basic basic stuff that if you've used AWS for a bit then you proba
   * Serverless - Good for unpredicatable workloads
   * Global Aurora
     * Up to 5 secondary regions (read only)
-    * Repl lag is 1s cross-region (exam q about 1 second cross region, it means probably asking about global aurora)
+    * Repl lag is 1s cross-region **exam q about 1 second cross region, it means probably asking about global aurora**
     * RTO is < 1 minute to failover
     * Up to 16 read replicas per region
   * ML
@@ -213,12 +213,18 @@ Skipping most basic basic stuff that if you've used AWS for a bit then you proba
   * Can use REDIS (which is more fault tolerant and uses horizontal scaling for perf) or Memcached (multi-node sharding and multi-threaded, but not persistant)
   * Security
     * IAM Auth, but only for AWS API-level
+    * KMS At rest
     * Redis Auth
       * Supports SSL
       * Uses user/pass
     * Memcached
       * Supports SASL based auth
-  * Redis has sorted sets to allow for data to be sorted automatically (i.e. gaming leaderboard)
+  * Key value store, can store session data, cannot use SQL
+    * Redis has sorted sets to allow for data to be sorted automatically (i.e. gaming leaderboard)
+  * Backup/ Snapshot/ PITR restore
+  * Managed and Scheduled Maint
+  * Must select an ElastiCache instance type (e.g. cache.m6g.large)
+  * Requires a code change so **if exam Q about caching solution that DOES NOT require a code change, it's NOT elasticache**
 
 # Ports
 No reason to remember all these (and probably know anyways), just need to know the difference between important ports and DB ports, review right before exam just in case
@@ -700,3 +706,831 @@ No reason to remember all these (and probably know anyways), just need to know t
 * DataSync: Schedule data sync from somewhere to AWS or AWS to AWS
 * Snow Family: Move large amounts of data to cloud through physical device
 * Database: for specific workloads, usually with indexing and querying
+
+# SQS
+* Attributes
+  * Default retention:4 days, max 14 days
+  * Limit of 256KB/message, but unlimited messages, unlimited throughput
+  * Can have duplicate messages and out of order messages
+  * Messages are persisted until consumed and deleted OR retention period passes
+  * Up to 10 messages at a time when polling
+  * Use ASG with the CloudWatch metric `ApproximateNumberOfMessages` to trigger a CloudWatch Alarm to scale out/in ASG - **Common integration on exam**
+  * No need to provision throughput
+* Security (same as SNS)
+  * Encryption
+    * In-flight using HTTPS API (default)
+    * At rest using KMS (must be enabled)
+    * Client-side if client wants to perform encrypt/decrypt 
+  * IAM policies can be used for access control
+  * SQS Access Policies (similar to S3 bucket policies)
+    * Use for cross account access and/or other services (SNS, S3, Lambda) to write to SQS
+* Message Visibility
+  * By default messag visibility is for 30 seconds, during this a message is not visible to other consumers once polled
+  * If the client needs more time to process the message, the `ChangeMessageVisibility` API call can be used to give that message more time
+* Long Polling
+  * When polling the client can wait for messages to appear. As soon as a message(s) appears, it will be sent to the client.
+  * Long polling wait time can be 1 - 20 seconds by adjusting `WaitTimeSeconds` on the queue or the API level
+  * Preferrable to short polling as it reduces API calls AND reduces latency as messages are consumed RIGHT when they appear, as opposed to the next API call
+* FIFO Queues
+  * Messages are sent in order, but limited throughput (300 msg/s without batching, 3000 msg/s with)
+  * Exactly once send capability (by removing duplicates using Deuplication ID)
+  * Ordered by Message Group ID (messages in the queue are put into groups) (mandatory parameter)
+  * Queue MUST be created with the suffix `.fifo`
+
+# SNS
+* Attributes
+  * Up to 12.5 Million subscriptions per topic
+  * All subscribers will get all messages (although there is new feature to filter)
+  * 100,000 topics limit
+  * No need to provision throughput
+* Security (same as SQS)
+  * Encryption
+    * In-flight using HTTPS API (default)
+    * At rest using KMS (must be enabled)
+    * Client-side if client wants to perform encrypt/decrypt 
+  * IAM policies can be used for access control
+  * SQS Access Policies (similar to S3 bucket policies)
+    * Use for cross account access and/or other services (SNS, S3, Lambda) to write to SQS
+* Can send to email, lambda, HTTP Endpoint, FireHose, SMS/Mobile, SQS
+* Data is not persisted (lost if not delivered)
+
+# SNS and SQS
+* Your app --> SNS which can send to multiple SQS which can be picked up by app
+  * This allows for no data loss do to throughput limitations
+  * You can add more SQS subscribers over time
+  * Make sure your SQS access policy allows for SNS to write
+  * Can send to SQS in other regions
+* For S3, for any event type (i.e. object create) and prefix (i.e. images/) you can only have one S3 Event rule
+  * By fanning out you can allow multiple things to consume a single event
+* SNS can be FIFO
+  * Must have `.fifo` suffix
+  * Same as SQS (ordering my message ID, dedupe by dedupe ID)
+  * Can have a Standard or FIFO SQS Subscriber
+  * Limited through put to same as SQS
+* Subscriber Message filtering
+  * JSON policy to filter out messages per subscriber
+
+# Kinesis Data Streams
+* Collect and store streaming data in real time
+  * Great for click streams, IoT devices, metrics & logs (things that input millions of records)
+* Retention up to 365 days
+  * data cannot be deleted, it has to expire
+  * ability to reprocess data (replay) by consumers 
+  * can have infinite consumers in parallel
+  * BIG difference vs SQS where the data can only have one consumer per queue as messages are deleted
+* Data up to 1MB (but really you want to use a lot of "small" real time data)
+* data ordering guarantee with same `Partition ID`
+  * This can group data across multiple shards
+* at rest KMS encryption, HTTPS in-flight
+* Capacity
+  * Provisioned Mode:
+    * Choose # of shards
+    * Pay per shard provisioned per hour and you can scale them manually
+    * Each shard gets 1MB/s in (or 1000 records/sec) and 2MB/s out
+    * Can use shard estimator tool to help determine how many shards you should have
+    * When increasing shards you can only double shards in one operation (1 --> 2, 2 --> 4. You can't do 1 --> 5)
+  * On-demand Mode:
+    * No need to provision or manage capacity
+    * Default capacity provisioned (4MB/s in or 4000 records per second)
+    * Scales automatically based on observed throughput peak during last 30 days
+    * Pay per stream per hour & data in/out per GB
+    * Max write 200 MiB/sec & 200K records/sec
+    * Max read 400 MiB/second (per consumer). Up to 2 default consumers or 20 with EFO
+ 
+# Amazon Data Firehose (formally Kinesis Data Firehose)
+  * Takes data from a producer with records up to 1MB
+  * Can transform record with a lambda
+  * Can put all or failed data into a S3 backup bucket
+  * Batches data together and writes to:
+    * AWS Destinations like S3, RedShift or OpenSearch **Remember these three for exam**
+    * Third-parties (i.e. - DataDog, MongoDB, etc.)
+    * Custom HTTP Endpoint
+  * Fully Managed Service, serverless
+  * Automatic scaling, pay for what you use
+  * Near Real-Time with buffering capability based on size/time (**Near Real-Time on exam typically meanins Firehose**)
+  * Supported CSV, JSON, Parquet, Avro, Raw Text & Binary Data
+  * Conversions to Parquet/ ORC, compressions with gzip/snappy/zip
+  * Does not store data, just batches and writes data to somewhere
+  * By default, Firehose waits for 5 MiB buffer size or 300 seconds interval before delivering records
+
+# Amazon MQ
+* Since SQS/SNS are "cloud-native" proprietary AWS services you may not want to re-architect traditional on-prem protocols like:
+  * MQTT, AMQP, STOMP, OpenWire, WSS
+* Managed message broker service for:
+  * RabbitMQ
+  * ActiveMQ
+* Amazon MQ doesn't "scale" as much as SQS/SNS (which are basically infinite)
+* Runs on servers, can run in Multi-AZ with failover
+* has queue feature (SQS) and topic features (SNS)
+* In HA you use EFS to store messages and then a failover can occur to a different AZ without losing data
+
+# ECS
+* EC2 Launch Type
+  * You must provision and maintain the EC2 instances
+  * Each instance must run the RCS Agent to register in the ECS Cluster
+  * AWS takes care of starting/stopping containers
+* Fargate - (we already know this) - exam will supposedly harp on how you should use Fargate over EC2 instances (for obvious reasons)
+* IAM Roles
+  * EC2 Instance Profiles
+    * Used by the ECS Agent
+    * Makes API calls to ECS Service
+    * Send container logs to CloudWatch Logs
+    * Pull Docker image from ECR
+    * Retrieve data from Secrets Manager or SSM Parameter Store
+  * Task Role
+    * Allows each task to have a specific role
+    * Defined in task definition
+* Can use load balancers - use ALB normally, only use NLB for high throughput/high performance use cases or to pair with AWS Private Link
+* Use EFS to have the same filesystems across AZ's for all tasks
+  * Fargate + EFS = completely serverless
+* Auto Scaling
+  * AWS Application Auto Scaling uses Avg. ECS Service CPU Util, Memory Util and ALB Request Count Per Target
+  * Kinds
+    * Target Tracking - scaled based on CloudWatch metric
+    * Step Scaling - Scale based on CloudWatch Alarm
+    * Scheduled - Scale based on specified date/time
+  * Remember that ECS Service Auto Scaling (task level ) != EC2 Auto Scaling (EC2 instance level)
+    * Obviously not an issue if using fargate
+  * Auto scaling EC2 Instances
+    * Auto Scaling Group - Scale based on CPU Util 
+    * EC2 Cluster Capacity Provider - automatically provisions and scales infra when EC2 instances are missing capacity (CPU, RAM, etc.)
+      * Pairs with ASG
+      * Smarter than plain ASG and should be used instead
+
+# ECR
+* Store Docker images on AWS (private and public)
+* Fully integrated with ECS, backed by S3
+* Access controlled through IAM
+
+# EKS
+* Open source container platform that uses Kubernetes. Similar to ECS
+* Cloud-agnostic - Can use K8's oon-prem or on any cloud provider (unlike ECS which is closed-source and AWS only)
+* Uses pods instead of ECS Services (if you see pods on exam, it's talking about EKS)
+* Node Types
+  * Managed Node Groups
+    * Creates and manages Nodes (EC2 instances) for you
+    * Nodes are part of ASG managed by EKS
+    * Supported on On-Demand or Spot Instances
+  * Self-Managed Nodes
+    * Nodes created by you and registered to the EKS cluster and managed by an ASG
+    * You can use prebuild AMI - Amazon EKS Optimized AMI
+    * Supports On-Demand or Spot Instances
+  * AWS Fargate
+    No maitenance, no nodes managed
+* Data Volumes
+  * Need to specify StorageClass manifest on EKS cluster
+  * Leverages Container Storage Interface (CSI) compliant driver
+  * Support for:
+    * EBS
+    * EFS
+    * FSx for Lustre
+    * FSx for NetApp ONTap
+
+# AWS App Runner
+* Fully managed service to deploy web applications and API's at scale
+* No infra experiance required
+* Start with source code or container images, configure settings (vCPU, RAM, Auto Scaling, Health Check, etc.)
+* Automatically builds and deploys the web app
+* Comes with automatic scaling, highly available, load balancer, encryption
+* VPC access support
+* Connect to database, cache and message queue
+* Used for web apps, API's microservices, rapid production deploys
+
+# AWS App2Container
+* CLI tool for migrating Java and .NET web apps into Docker containers
+* Lift and shift apps running on bare metal into AWS without code changes
+* Generates CloudFormation templates (compute, network, etc.)
+* Registers generated Docker containers to ECR
+* Deploys to ECS, EKS or App Runner
+* Supports pre-build CI/CD pipelines
+* Just need to remember for quiz that if you want to migrate a Java or .NET app into container on AWS, this is what you use
+
+# AWS Lambda
+* Languages (don't need to remember all of these, just remember is has a lot of support for languages especially Node.js and Python)
+  * Node.js (JavaScript)
+  * Python
+  * Java
+  * C# (.NET Core) / PowerShell
+  * Ruby
+  * Customer Runtime API (community supported i.e. Rust, Golang)
+* Container Images
+  * Container image must implement Lambda Runtime API
+  * ECS / Fargate preferred for running Docker images
+* Example of Serverless CRON job - CloudWatch Events EventBridge triggers a Lambda every hour
+  * No longer need to run a EC2 service constantly just for it to run the job every hour
+* Pricing
+  * Pay per request and compute time
+  * Free tier 1,000,000 AWS Lambda requests and 400,000 GB of compute time  
+    * $.20 per 1 million requests after 1M
+    * 400,000GB-seconds = 400,000 seconds if 1GB of RAM, 3.2M if 128GB RAM
+  * $1 for 600,000GB-seconds after
+* Limits (**exam likes to test your knowledge on these!**)
+  * Execution
+    * Memory: 128MB 0 19GB
+    * Max execution time: 900 seconds (15 minutes)
+    * Env variables - 4KB
+    * /tmp (disk capacity) 512MB to 10GB
+    * Concurrency executions: 1000 (can be increased)
+  * Deployment
+    * Deployment size: 50MB
+    * Size of uncompressed deployment: 250MB
+    * /tmp to load other files at startup
+    * Size of env vars: 4KB
+  * Exam likes to test on "We need 30 minutes of run time" or "We need 30GB of RAM" etc. so you should know Lambda cannot work
+* Concurrency
+  * 1000 requests per region per account
+  * Can set a "reserved concurrency" at the function level (which is a limit of how many can run at a time)
+  * Each invocation over the concurrency limit will trigger a "Throttle"
+  * Throttle Behavior
+    * sync invoke: return ThrottleError - 429
+    * async invoke: retry automatically then go to DLQ
+      * will retry for up to 6 hours if receiving 429 or 500 errors
+      * returns event to internal event queue
+      * Each retry interval increases exponentially from 1 second after the first attempt to max of 5 minutes      
+  * If you need more than the default 1000 invocations, open support ticket
+  * If you don't set a reserved concurrency and one lambda function gets hit with 1000 invocations then all the other lambda functions will throttle
+  * Cold Start
+    * New instance - code is loaded and code outside the handler is run (init)
+    * If init is large (code, dependencies, SDK) this process can take some time
+    * First request served by new instances has higher latency than the rest
+  * Provisioned Concurrency
+    * Concurrency is allocated before the function is invoked and cold start never happens
+    * Low latency
+    * Application Auto Scaling can manage concurrency (schedule or target util)
+  * Keep in mind that provisioned AND reserved concurrency will eat into your total concurrency per region. (if you set it to 300 for a specific function you will only ever have 700 left for other functions).
+* Lambda SnapStart
+  * Improves Lambda function performance up to 10x at no extra cost for Java, Python, .NET
+  * Function is invoked from pre-initialized state (no function initialization from scratch)
+  * When you publish new version Lambda inits function, takes snapshot of memory and disk state of initialized function and snapshot is cached
+* Lambda@Edge & CloudFront Functions
+  * Edge Function: code that you write and attach to a CloudFront distrubution
+    * Allows you to run functions close to your users to reduce latency
+  * Runs close to your users to minimize latency
+  * Fully serverless, pay only for what you use
+  * Can help with:
+    * Website Security and Privacy
+    * Dynamic Web Application at Edge
+    * SEO
+    * Intelligently Route Across Origins and Data Centers
+    * Bot Mitigation at the Edge
+    * A/B Testing
+    * Real-time Image Transformation
+    * User Authentication and Authorization
+    * User Prioritization
+    * User Tracking and Analytics
+  * CloudFront Functions
+    * Lightweight functions written in JS
+    * high scale latency sensitive CSN customizations
+    * Sub-ms startup times, millions of requests/sec
+    * Used to change Viewer requests (after CF receives requests from a viewer) and responses (before CF receives request)
+    * Native feature of CF (manage code entirely within CF)
+    * max execution time < 1ms
+  * Lambda@Edge
+    * Written in NodeJS or Python
+    * Scales to thousands of requests/second
+    * max exeuction time 5-10 seconds
+    * Used to change CF requests and responses
+      * Viewer Request, Origin Request (before CF forwards request to origin), Origin Response (after CF receives response from origin), Viewer Response
+    * Author function in on AWS Region, CF distributes to all it's locations
+  * Use cases
+    * Cloudfront Functions:
+      * Cache key normalization (transform requests attributes - headers, cookies, query strings, URL to create a cache key
+      * header manipulation - insert/modify.delete HTTP headers in request or response
+      * URL rewrites or redirects
+      * Request authentication and Authorization (create and validate a JWT) to allow/deny requests
+    * Lambda@Edge
+      * Longer execution time (several ms)
+      * Adjustable CPU/memory
+      * Your code depends on 3rd party libraries or other AWS services
+      * Network access to use external services
+      * File system access or access to the body of HTTP requests
+* Lambda in VPC
+  * By default, Lambda is not inside a VPC and does not have access to the resources in it
+  * In order to access resources in yoru VPC, you must create an ENI inside the VPC
+  * If you want to use an RDS Proxy with your Lambda (recommended as many Lambdas can overwhelm as RDS server) then the Lambda must be deployed in your VPC as RDS proxy is NEVER publicly accessible **remember for exam, important**
+* Invoke Lambda from within RDS & Aurora
+  * Allows you to process data events from inside the database
+  * Supported by RDS for Postgres and Aurora MySQL
+  * Must allow outbound traffic from DB instance to Lambda
+  * DB instance must have required permissions to invoke Lambda function
+* RDS Event Notifications
+  * Notifications that tell you about DB instance itself (does not talk about data) i.e. created, stopped, started
+  * Subscribe to event categories: DB instance, DB snapshot, DB Parameter Group, DB Security Group, RDS Proxy, Custom Engine Version
+  * Near real time events (up to 5 minutes)
+  * Send notification to SNS or subscribe to events using EventBridge
+
+# DynamoDB
+* NoSQL DB w/ transactions that is HA across multiple Az's
+* Millions of request per second, trillons of rows, 100s of TB's of storage
+* single-digit millisecond performance
+* Integrated with IAM for security, authorization and administration
+* auto scaling, always available
+* Standard and Infrequent Access (IA) table classes
+* Basics
+  * Made of Tables
+  * Each Table has a Primary Key that must be decided at creation time
+  * Table can have infinite items (rows)
+  * Each item has attributes (can be added to over time, can be null)
+  * Max size of an item is 400KB
+  * Data types supported:
+    * ScalerTypes (String, Number, Binary, Bool, Null)
+    * DocumentTypes (List, Map)
+    * SetTypes (String Set, Number Set, Binary Set)
+  * DynamoDB is a great choice for rapidly evolving schemas (so if you see rapidly evolving schemas on the exam, it's talking about DynamoDB)
+* Read/Write Capacity Modes (Don't worry about HOW to calculate capacity, its not on this exam)
+  * Provisioned Mode (default)
+    * Specified read/writes /sec
+    * Capacity needs to be planned beforehand
+    * Pay for provisioned Read Capacity Unity (RCU) and Write Capacity UInits (WCU)
+    * Can add auto-scaling RCU/WCU
+  * On-Demand Mode
+    * Read/writes scale automatically, no capacity planning needed
+    * Pay for what you use but it's more $$$
+    * Great for unpredictable workloads, steep sudden spikes or extremely low activity
+* DynamoDB Accelerator (DAX)
+  * Microseconds latency with in-memory cache
+  * 5 minutes TTL on cache (default)
+  * Doesn't require app logic modification
+  * DAX vs Elasticache - DAX is for individual records vs Elasticache is more for storing things you already computed from DynamoDB
+* Stream Processing (DynamoDB Streams)
+  * Ordered stream of item-level modifications (create/update/delete) in a table
+  * 24 Hours retention, Limited # of consumers, Processing using AWS Lamabda Triggers or DynamoDB Stream Kinesis adapter
+  * Use cases:
+    * Insert into derivitive tables
+    * Implement cross-region repl
+    * Invoke AWS Lambda on changes to DynamoDB table
+    * Real time usage analytics
+  * Can also use Kinesis Data Streams (newer)
+    * 1 year retention
+    * High # of consumers
+    * Processing using lots of services..
+* Global tables
+  * Active-Active global tables - apps can read and write to table in any region
+  * Must enable DynamoDB Streams as a pre-req
+  * Low latency in multiple regions
+* TTL - Automatically delete items after expiry timestamp
+* Continuous Backups
+  * Optional enabled for the last 35 days
+  * PITR to any time in the window
+  * recovery process make a new table
+* On-demand backups
+  * Full backups for long term retention until deleted
+  * does effect performance or latency
+  * Can be configured and managed in AWS Backup
+  * recovery process create new table
+* Export to S3 (must enable PITR)
+  * Can export any point of time in the last 35 days
+  * JSON or ION format
+  * Doesn't consume read capacity
+* Import from S3
+  * Import CSV, DynamoDB, JSON or ION
+  * Doesn't consume write capacity
+  * Creates new table
+  * Import errors logged in CloudWatch Logs
+
+# API Gateway
+* Supports WebSocket Protocol
+* Handles API versioning (v1, v2..)
+* Handle different environments (dev, test, prod)
+* Handle security (Authentication and Authorization)
+* Create PAI Keys, handle request throttling
+* Swagger/Open API import to quickly define APIs
+* Transform and validate requests and responses
+* Generate SDK and API specifications
+* Cache API responses
+* Integrations:
+  * Lambda (easy REST API)
+  * HTTP such as on-prem or ALB
+    * Why? Add rate limitig, caching, user auth, API keys, etc.
+  * AWS Service (i.e. step function workflow, post message to SQS)
+    * Why? Add auth, deploy duplicly, rate control
+* Endpoints:
+  * Edge-Optimized (default): For global clients
+    * routed through cloudfront edge locations but API gateway still lives in only one region
+  * Regional:
+     * For client in same region, but can still manually combine with CloudFront
+  * Private
+     * Can only be access from your VPC using an ENI
+* Security:
+  * User Authentications through IAM Roles, Cognito, Customer Autheorizer (your own logic)
+  * Custom Domain Name HTTPS through ACM
+    * If using Edge Optimized endpoint then cer must be in us-east-1
+    * if using regional endpoint then cert must be in API Gateway region
+    * Must setup CNAME or A-alias record in Route 53
+* Default timeout of 29 seconds but can be changed
+
+# AWS Step Functions
+* Visual workflow for Lambda functions
+* Can integrate with EC2, ECS, on-prem servers, API Gateway, SQS queues, etc.
+* Possibility of implementing human approval feature
+* Features: sequence, parallel, conditions, timeouts, error handling
+   
+# Amazon Cognito
+* Gives users an identity to interact with web or mobile application
+  * ** COMMON QUESTION ON EXAM is to ask how to store credentials for mobile users - do not say "store on mobile device", say "Cognito"**
+* Cognito User Pools
+  * Sign in functionality for app users using a serverless database
+  * Simple user/password but can have MFA
+  * Can also use Federated Identities (Google, FB, SAML, etc.)
+  * Integrates with API Gateway & ALB
+* Cognito Identity Pools (used to be called Federated Identity)
+  * Provides AWS credentials to users so they can access AWS resources directly
+  * Can integrate with a IdP
+  * IAM policies applied to the credentials are defined in Cognito
+  * Default IAM roles for guest users
+  * Can set row level security in DynamoDB **Important to remember, frequently on exam**
+* Cognito vs IAM: It's for "outside" users (web and mobile) so on the test looks for "hundreds of users" or "mobile users" or "authenticate with SAML" to know whether they want IAM or Cognito
+
+# DocumentDB
+* Is MongoDB
+* store, query and index JSON data
+* Similar "deployment concepts" as Aurora
+* HA with rep across 3 AZ's
+* storage auto grows in increments of 10GB
+* Automatically scales to millions requests/sec
+* On exam is you see "MongoDB" it's probably talking about DocumentDB, if you see "NoSQL" it's probably taling about DocumentDB or DynamoDB
+
+# Neptune
+* Fully managed graph database (extremely interconnected data like Wikipedia)
+* HA across 3AZ's with up to 15 read replicas
+* Store up to billions of relations and query the graph with milliseconds latency
+* Streams
+  * Real time ordered sequence of every change of graph data
+  * Changes available immediately after writing
+  * No duplicates, strict order
+  * Steams data accessible in HTTP Rest API
+  * Use cases:
+    * Use notifications when certain changes are made
+    * maintain graph data synchronized in another data store (S3, OpenSearch, ElastiCache)
+    * Replicate data across region in Neptune
+
+# Keyspaces
+* Managed Apache Cassandra which is open source NoSQL distributed DB
+* Serverless, Scalable, HA
+* Scales based on application traffic
+* Tables are replicated 3 times across multiple AZ's
+* Uses Cassandra Query Language (CQL)
+* Single-digit millisecond latency at any scale, 1000s of rquests per second
+* Capacity: On-demand mode or provisions mode with auto-scaling (same as DynamoDB)
+* Encryption, backup, PITR up to 35 days
+* Use cases: store IoT data, time-series data
+* **Just remember Keyspaces if `Apache Cassandra` is on test**
+
+# Timestream
+* Serverless time series database
+* automatically scales to adjust capacity
+* stores trillions of events per daya
+* 1000s time faster & 1/10th the cost of relations databases for time related data
+* Scheduled queries, multi-measure records, SQL compatibility
+* Encryption in transit and at rest
+* recent data kept in memory and historical data kept in cost-optimized storage
+* Built-in time series analytics functions
+
+# Athena
+* Serverless query service to analyze data in S3
+* Uses standard SQL language to query files (built on Presto)
+* CSV, JSON, ORC, Avro, Parquet
+* Price $5/TB scanned
+* Commonly used with Amazon QuickSight
+* Use cases: Analyze VPC flow logs, CloudTrail trails, ELB logs, etc.
+* **Exam Q on analyzing data in S3 using serverless = Athena**
+* Performance Improvements
+  * Use columnar data type for cost savings (less scans)
+    * Parquet or ORC is recommended
+    * Huge performance improvement
+    * Use Glue to convert your data to Parquet or ORC
+  * Compress data for smaller retrievels
+  * Partition datasets in S3 for easy querying on virtual columns
+    * e.g. s3://athena-examples//flight/parquert/year=1991/month=1/day=1/
+  * Use larger files (> 128 MB) to minimize overhead
+* Federated Query
+  * Can run SQL queries across relational, non-relational, and customer data sources (AWS or on-prem)
+  * Uses Data Source Connectors that run on AWS Lambda to run Federated Queries (e.g. CloudWatch Logs, DynamoDB, RDS, and much more)
+  * Can store results back to S3
+
+# Redshift
+* based on Postgres, but it's not OLTP, it's OLAP
+* 10x better performance than other data warehouses
+* Columnar storage of data & Parallel Query engine
+* Provision cluster OR serverless cluster
+* SQL interfaces for queries
+* BI Tools like QuickSight or Tableua integrate with in
+* vs Athena: Faster Queries, joins and aggregations thanks to indexes
+* Cluster:
+  * Leader node: For query planning, results aggregation
+  * Computer node: for performance queries, send results to leader
+  * Provisioned mode:
+    * choose instance types in advances
+    * Can reserve instances for cost savings
+* Has Multi-AZ for some clusters
+* Snapshots are PITR backups stored in S3
+  * Incremental (only changes what is saved)
+  * Can restore snapshot into a new cluster
+  * Automated every 8 hours, every 5 GB or on schedule, set retention
+  * Manual: snapshot is retained until deletion
+  * You can configure Redshift to automatically copy snapshots (automated or manual) to another AWS region
+* Loading data:
+  * Large inserts are MUCH better
+  * Kinesis Data Firehouse --> Redshift (through S3 copy)
+  * S3 --> Redshift
+    * Put data into S3 and then run copy command in redshift
+    * Can route data through the internet (doesn't have enhanced VPC Routing) or through VPC (Enhanced Routing)
+  * EC2 Instance --> Redshift
+    * Should insert in batches, not RBAR as that's extremely inefficient for Redshift
+* Redshift Spectrum
+  * Launch query in redhsift which kicks off the query on many redshift spectrum worker nodes which queries data in S3 and sends the data back to redshift.
+  * Allows you to query S3 without putting data into Redshift first
+  
+# OpenSearch (used to be called ElasticSearch)
+* In DynamoDB, you can only query by primary key or indexes, OpenSearch searches any field, even partial matches
+* Common to use OpenSearch as complement to another DB
+* Managed cluster or serverless cluster
+* Does not natively support SQL (but can be enabled via plugin)
+* Ingest from Kinesis Data Firehose, AWS IoT, CloudWatch Logs
+* Security through Cognito, IAM, KMS, TLS
+* Comes with OpenSearch Dashboards for visualization
+* So for instance your data goes into DynamoDB, DynamoDB Streams uses a Lambda to load just item data into OpenSearch, and then in open Search it searches for a specific item and then sends it back to DynamoDB to get the full item record
+
+# EMR
+* Elastic MapReduce
+* Hadoop clusters (Big Data) to analyze and process vast amount of data
+* clusters can be made of hundreds of EC2 instances
+* EMR comes bundled with Big Data tools like Apache Spark, HBase, Presto...
+* EMR takes care of all provisioning and configuration
+* auto-scaling and integration with spot instances
+* use cases: data processing, ML, web indexing, big data
+* Node types
+  * Master Node - Manages cluster, coordinates, manages health - long running
+  * Core Node - Run tasks and store data - long running
+  * Task Node (optional) just to run tasks - usually Spot
+* Purchases options:
+  * On-demand: reliable, predictable, won't be terminated
+  * Reserved (min 1 year): cost savings (EMR will automatically use if avail)
+  * Spot INstances: cheaper, can be terminated, less reliable
+* Can have long running cluster or transient (temporary) cluster
+
+# QuickSight
+* Serverless ML powered BI service to create interactive dashboards
+* per-session pricing
+* Integrates with S3, Aurora, Athena, Redshift, S3...
+* In-memory computation using SPICE (only works if you import data into QuickSight, not if you query a different DB)
+* Enterprise edition: Column level security (CLS)
+* Can use AWS Services, Third party datasources (on-prem, JIRA, salesforce) or imported data
+* Define users (standard users) or groups (enterprise version)
+  * QuickSight users, not IAM users!
+* Dashboard is a read only snapshot of an analysis that you can share
+  * Preserved the config of the analysises (filtering, parameters, controls, sort)
+  * You can share the analysis or the dashboard with Users and Groups
+  * To share a dashboard you must first publish it
+  * Users how can see a dashboard can also see underlying data
+
+# AWS Glue **Exams like to ask about Glue so this part is important**
+* Serverless ETL service
+* Can extract and convert data into parquet (columnar) format for Athena
+  * S3 PUT notifications fire a lambda or EventBridge to kick off Glue job, Glue imports CSV from S3, converts to Parquet, saves to a different bucket which is analyzed by Athena **Important concept for exam**
+* Glue Data Catalog - Uses Glue Data Crawler to inspect DB's (RDS, DynamoDB, etc.) and creates metadata databases/tables in the Glue Data Catalog which is used by other services (Glue (ETL), Athena, RedShift..)
+* Glue Job Bookmarks - prevents re-processing old data
+* Glue Datarew - clean and normalize data using pre-built transforms
+* Glue Studio - new GUI to create, run and monitor ETL Glue jobs
+* Glue Streaming ETL (built on Apache Spark) - Compatible with streaming like Kinesis Data Streams, Kafka, MSK
+
+# AWS Lake Formation
+* Data Lake - central place to have all your data for analytics purposes
+* Fully managed service that makes it easy to setup data lake in days
+* Discover, cleanse, transform and ingest data into your Data Lake
+* Automates complex manual steps (collecting, cleansing, moving, cataloging data) and de-duplicate
+* Combine structured and unstructed data
+* Out of the box blueprints - S3, RDS, relations and NoSQL DB
+* Fine grained access controlf ro applications (row and column level)
+* Built on top of AWS Glue
+* **Important for exam** - You can do column AND row level security in lake formation, which means any service which then pulls the data from your data lake will only see what you want it to see, you don't have to manage permissions in each service
+
+# Amazon Managed Service for Apache Flink (previously Kinesis Data Analytics for Apache Flink)
+* Flink (Java, Scala, or SQL) is is a framework for processing data streams
+* Reads from Kinesis Data Streams or Amazon MSK (Apache Kafka)
+  * CANNOT read from Firehose which is an **exam trick**
+* Run any flink app on a managed cluster on AWS
+  * Provisioned compute resources, parallel compute, auto scaling
+  * Automated backups (checkpoints and snapshots)
+  * Uses flink programming features to transform data
+  
+# Amazon MSK
+* Alternative to Amazon Kinesis
+* Fully managed Apache Kafka on AWS
+  * Allow you to create, update and delete clusters
+  * MSK creates & manages Kafka broker nodes & Zookeeper nodes
+  * Deploys MSK cluster in your VPC
+  * Automatic recovery from common Apache Kafka failures
+  * Data is stored on EBS volumes for as long as you want
+* MSK Serverless
+  * Run Apache Kafka on MSK without managin capacity
+  * MSK automatically provisions resources and scales compute & storage
+* MSK vs Kinesis Data Streams:
+  * Kinesis Data Streams: 
+    * 1MB message size limit
+    * Data Streams with shards
+    * Shard Splitting & Merging
+    * TLS in-flight encryption
+    * KMS at-rest encryption
+    * Only keep data for 1 year
+  * MSK
+    * 1MB default, configure for higher
+    * Kafka Topics with Partitions
+    * Can only add partition to a topic
+    * PLAINTEXT or TLS In-flight encryption
+    * KMS at rest encryption
+    * Can keep data for as long as you want
+* Consumers:
+  * Amazon Managed Service for Apache Flink
+  * Glue
+  * Lambda
+  * Applications running EC2 or ECS
+
+# IOT Core
+* Service that collects data from IOT devices
+
+# Amazon Rekognition
+* Uses AI to find objects, people, text, scenes in images and videos
+* Can do user verification, people counting, content moderation, celebrities, object flagging (mountains, dogs, etc.)
+* Content Moderation
+  * Detect content that is inappropriate, unwanted or offensive
+  * Can be used to moderate image content for a website
+  * Set threshold confidence
+  * Can manually review flagged items
+
+# Amazon Transcribe
+* Automatically convert speech to text
+* Uses deep learning process called automatic speech reconginition (ASR) to recognize speech to text 
+* Can automatically remove PII using redaction
+* Supports automatic language identification for multi-lingual audio
+
+# Amazon Polly
+* Text to speech (many voices)
+* customize the pronunciation of words with Pronunciation lexicons
+  * e.g. If you want it to say "Amazon Web Services" everytime it reads "AWS" or how to say a certain word
+* Upload lexicons and use them in SynthesizeSpeech operation
+* Generate speech from plain text or from documents marked up with Speech Synthesis Markup Language (SSML) - this enables more customization
+  * emphasizing specific words or phrases
+  * Using phonetic pronunciation
+  * including breathing sounds, whispering
+  * using newscaster speaking style
+
+# Amazon Translate
+* Translates language from one language to another, allowing you to localize content
+
+# Amazon Lex & Connect
+* Lex
+  * Same tech that powers alexa
+  * Used for chatbots and call center bots
+  * Recognizes the intent of text/callers
+* Connect
+  * receive calls, create contact flows, cloud-based virtual contact center
+  * Can integrate with other CRM's
+  * No upgront payments, 80% cheaper than traditional contant center solutions
+
+# Amazon Comprehend
+* Natural Language Processing (NLP)
+* Fully managed serverless service
+* Uses ML to find insights and relationships in text
+  * Language of text
+  * Extract key phrases, places, people, brands, events
+  * Understand how positive or negative the text is
+  * Automatically organizes collection of text files by topic
+* Can be used to review customer emails for positive or negative experiances
+* Create or group articles by topic
+
+# Amazon Comprehend Medical
+* Detects and returns useful information in unstructured clinical text
+* Uses NLP to detect Protected Health Information (PHI)
+* Can be used to categorize health information (prescriptions, client issues)
+
+# Amazon SageMaker AI
+* Full managed service for developers / data scientists to build ML models
+* Makes it easy to label, build ML model, train, tune, apply the model, which is normally hard to do and has many different parts - all these parts are in SageMaker
+
+# Amazon Kendra
+* Fully managed document search service **the important part**
+* Extracts answers from documents, builds Knowledge Index and then uses NLP with a search
+  *  e.g. user can search "Where is IT support desk", it searches and returns "1st Floor"
+* Learns from user interfactions/feedback to promot preferred results
+* Ability to manually fine-tune search results (importance of data, freshness, custom)
+
+# Amazon Personalize
+* Build apps with real-time personalized recommendations
+* Same tech used on Amazon.com
+* Can make personalized product recommendations, customized direct marketing
+
+# Amazon Textract
+* Extract text, handwriting and data from any scanned documents using ML
+* Read any type of document or image
+* Extract data from forms and tables
+* Good for healthcare, financial services, public sector (tax forms, ID documents, passports)
+
+# CloudWatch
+* Metrics
+  * Up to 30 dimensions per metric
+  * All metrics have timestamps
+  * Can create custom CloudWatch Metric
+  * Can stream metrics via Firehose
+    * Can filter subset of metrics instead of all of them
+* Logs
+  * log group - arbitrary name, usually representing an app
+  * log stream - instances within app, log files, containers
+  * can define log expiration policies
+  * logs are encrypted by default
+  * can setup KMS with your own keys
+  * Insights lets you write a query and select a timeframe and you can query your logs and see visualization.
+    * Can add to dashboard
+    * Can query multiple Log groups (even in different AWS accounts)
+    * It's a query engine, not a real time engine
+  * Can export to S3 but it can take up to 12 hours
+  * Log subscriptions
+    * real-time log events that sends to Kinesis Data Streams, Firehose or Lambda
+    * Can use subscription filter to filter which logs are sent
+    * By using this you can aggregate different logs from multiple regions or accounts into a single  destination (e.g. Kinesis Data Streams)
+      * Need to setup IAM access policy in source and destination accounts for cross-account
+* Log Tail allows you to see logs come in as they occur
+* EC2 instances will not send logs to CloudWatch by default, you must use an agent
+  * Ensure you have IAM permissions for the EC2 to send logs to CloudWatch
+  * Can be used on-prem as well
+* Agents
+  * CloudWatch Logs Agent
+    * Older - can only send to CloudWatch Logs
+    * Unified
+      * Can collect additional system-level metrics and at a more granular level
+      * Centralized config using SSM Parameter Store
+* Alarms
+  * Can start, terminate, reboot or recover an EC2 instance
+  * Trigger Auto-scaling action
+  * Send notification to SNS (which could send to Lambda to do pretty much anything)
+  * Alarms are single metric only
+  * Composite alarms can monitor the states of multiple other alarms using AND and OR conditions
+    * Helps to remove alarm noise by creating complex composite alarms
+  * Alarms can be made off a metric filter
+* Container Insights
+  * collects metrics and logs from containers (ECS, Fargate, K8s on EC2)
+  * In EKS and K8s, Insights uses a containerized version of CloudWatch Agent to discover containers
+* Lambda Insights is a lambda layer which collects system-level metrics and diagnostic info (cold starts, worker shutdowns, etc.)
+* Contributer Insights **See metrics about top-N contributors**
+  * Analayzes log data and creates time series that displays contributor data
+  * Works with any AWS generated logs
+  * Helps you find bad hosts, heaviest netowrk users, etc.
+* Application Insights
+  * Provides automated dashboards that shwo potential problems with monitored apps
+  * app runs on EC2 with select technologies only (.NET, Java, etc.)
+  * links to other AWS resources (e.g. Lambda, EBS, RDS, etc.)
+  * Shows issues with application related to some services
+  * Uses SageMaker
+  * All findings and alerts are send to EventBridge and SSM OpsCenter
+
+
+# EventBridge (formerly CloudWatch Events)
+* Can run Scheduled (cron jobs) or use Event Pattern which can react to a service doing something (eg. IAM root login)
+* trigger Lambda, send SQS/SNS..
+* AWS Services send to `Default Event Bus`, AWS SaaS Partners (Datadog, Zendesk) send to `Partner Event Bus` and your own Custom apps can write to the `Custom Event Bus`
+* You can access event busses across accounts using resource based policies
+* You can archive events (all/filter) sent to an event bus (indefinitely, set period)
+* You can replay archived events
+* Schema Registry
+  * Can analyze the events in your bus and infer a schema
+  * Allows you to generate code for application that follows the eventbridge bus schema
+  * Can version schemas
+* Resource based Policy
+  * Manage permissions for specific Event Bus
+  * allow/deny events from other AWS accounts or regions
+
+# CloudTrail
+* Provides governance, compliance and audit
+* Enabled by default
+* Get history of events/ API calls made within your AWS Account
+* Trail can be applied to all regions (default) or single region
+* Can put logs into CloudWatch or S3 (can do if you want to keep events for longer than 90 days)
+* If a resource is deleted, investigate CloudTrail first!
+* Logs Management Events by default, Data Events (S3 object activity, Lambda function) are not logged by default
+* Insights:
+  * Detects unusual activity such as hitting servcie limits, inaccurate resource provisioning, bursts of IAM actions, etc.)
+  * CloudTrail Insights analyzes normal events to create a baseline
+  * and then continously analyzes write events to detect unusual patterns
+* You can have CloudTrail send events to EventBridge which can then send notifications
+
+# AWS Config
+* Auditing and recording compliance of AWS resources
+* Records configuration and changes over time
+* You can receive alerts for changes
+* Per-region service
+* Can be aggregated across regions and accounts
+* Can store data into S3
+* Rules
+  * Can use AWS managed config rules (over 75)
+  * Make cusom config rule
+  * can be eval/triggered for each config change or at regular time intervals
+* DOES NOT prevent actions from happenings (no deny), just reports
+* No free tier, $.0003 per configuration item recorded per region, $.001 per config rule evaled per region (aka $$)
+* Can show you compliance, configuration and CloudTrail API calls to a resource over time
+* Remeditions using SSM Automation Documents
+  * AWS Managed or custom Automation Documents can be trigged to take remediation against non-compliant resources (e.g. remove unused IAM access keys).
+    * Can make it activate a Lambda to do whatever
+  * Can set Redmediation retries (up to five times) if the resource is still non-compliant after auto remediation
+* Examples:
+  * Can send to EventBridge to trigger notifications to SNS when resources are non-compliant
+  * Can send notifications directly to SNS (notifications can then be filtered and sent to admins)

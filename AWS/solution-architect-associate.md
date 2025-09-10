@@ -1101,7 +1101,7 @@ No reason to remember all these (and probably know anyways), just need to know t
 * Integrations:
   * Lambda (easy REST API)
   * HTTP such as on-prem or ALB
-    * Why? Add rate limitig, caching, user auth, API keys, etc.
+    * Why? Add rate limiting, caching, user auth, API keys, etc.
   * AWS Service (i.e. step function workflow, post message to SQS)
     * Why? Add auth, deploy duplicly, rate control
 * Endpoints:
@@ -1110,11 +1110,11 @@ No reason to remember all these (and probably know anyways), just need to know t
   * Regional:
      * For client in same region, but can still manually combine with CloudFront
   * Private
-     * Can only be access from your VPC using an ENI
+     * Can only be access from your VPC using an ENI (using resource policy to define access)
 * Security:
-  * User Authentications through IAM Roles, Cognito, Customer Autheorizer (your own logic)
+  * User Authentications through IAM Roles, Cognito, Custom Authorizer (your own logic)
   * Custom Domain Name HTTPS through ACM
-    * If using Edge Optimized endpoint then cer must be in us-east-1
+    * If using Edge Optimized endpoint then cert must be in us-east-1
     * if using regional endpoint then cert must be in API Gateway region
     * Must setup CNAME or A-alias record in Route 53
 * Default timeout of 29 seconds but can be changed
@@ -1508,9 +1508,9 @@ No reason to remember all these (and probably know anyways), just need to know t
 * If a resource is deleted, investigate CloudTrail first!
 * Logs Management Events by default, Data Events (S3 object activity, Lambda function) are not logged by default
 * Insights:
-  * Detects unusual activity such as hitting servcie limits, inaccurate resource provisioning, bursts of IAM actions, etc.)
+  * Detects unusual activity such as hitting service limits, inaccurate resource provisioning, bursts of IAM actions, etc.)
   * CloudTrail Insights analyzes normal events to create a baseline
-  * and then continously analyzes write events to detect unusual patterns
+  * and then continuously analyzes write events to detect unusual patterns
 * You can have CloudTrail send events to EventBridge which can then send notifications
 
 # AWS Config
@@ -1522,15 +1522,424 @@ No reason to remember all these (and probably know anyways), just need to know t
 * Can store data into S3
 * Rules
   * Can use AWS managed config rules (over 75)
-  * Make cusom config rule
+  * Make custom config rule
   * can be eval/triggered for each config change or at regular time intervals
 * DOES NOT prevent actions from happenings (no deny), just reports
 * No free tier, $.0003 per configuration item recorded per region, $.001 per config rule evaled per region (aka $$)
 * Can show you compliance, configuration and CloudTrail API calls to a resource over time
-* Remeditions using SSM Automation Documents
+* Remediations using SSM Automation Documents
   * AWS Managed or custom Automation Documents can be trigged to take remediation against non-compliant resources (e.g. remove unused IAM access keys).
     * Can make it activate a Lambda to do whatever
-  * Can set Redmediation retries (up to five times) if the resource is still non-compliant after auto remediation
+
+  * Can set Remediation retries (up to five times) if the resource is still non-compliant after auto remediation
 * Examples:
   * Can send to EventBridge to trigger notifications to SNS when resources are non-compliant
   * Can send notifications directly to SNS (notifications can then be filtered and sent to admins)
+
+# AWS Organizations
+* Consolidated billing across all accounts
+* Member accounts can only belong to one organization
+* Shared reserved instances and Savings Plans discounts across accounts
+* Can enabled cloudtrail on all accounts and send logs to central S3 account
+* Establish cross account roles for admin purposes
+* Service Control Policies
+  * IAM policies applied to OU or Accounts to restrict Users and Roles
+  * They do not apply to the management account
+* Tag Policies
+  * Standardizes tags across resources in AWS Organization
+  * Ensure consistent tags, audit tagged resources, prevent non-compliant tagging on specified resources
+  * Use EventBridge to monitor tags
+  * **"How to ensure consistent tags account accounts" on test - think organizations**
+
+* IAM Conditions
+  * `aws:SourceIp` - restricts client IP <ul>from</ul> which API calls are being made
+  * `aws:RequestedRegion` - restricts the region the API calls are made <ul>to</ul>
+    * e.g. if you put eu-central-1, you won't be able to hit from eu-central-1
+  * `ec2:ResourceTag` - restrict based on tags
+    * e.g. can limit `StartInstance` to user tags with `aws:DevOps`
+  * `aws:MultiFactorAuthPresent` - used to force MFA
+    * e.g. can limit `StopInstance` only to users that have MFA'ed
+  * `s3:ListBucket` is a bucket level permission so it needs `Resource:<bucket arn>`
+  * `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` apply to objects IN the bucket so they need `Resource:<bucket arn>/*` **WILL PROBABLY BE ON TEST**
+  * `aws:PrincipalOrgID` can be used to restrict access to accounts that are member of the AWS Organization
+
+* IAM Roles vs Resource Based Policies
+  * You can access a S3 cross account by assuming an IAM role OR by connecting directly to the bucket and giving access in the bucket policy.
+  * The difference is that if you assume an IAM role, you give up the original permissions and take on the permissions assigned to the role. With resource based policies, the principal does not give up their permissions
+  * Resource based policies should be used when for instance a user in account A needs to scan a DynamoDB table in Account A and then dump into S3 bucket in Account B.  If you used roles you may have to go back and forth assuming roles
+  * More and more services are implementing resource based policies in AWS e.g. S3, SNS, SQS, etc.
+  * Eventbridge rules will implement a resource based policy to connect to some things like S3, SQS, SNS, etc. but other things that don't support resource based policies it will use a IAM role.  
+    * Some services (like Kinesis) DO support resource based roles but they are still using IAM roles. In order to figure out if it will use a resource policy or the IAM role you need to look at the EventBridge rule
+
+* IAM Permission Boundaries
+  * Supported for users and roles (not groups)
+  * Advanced feature to use a managed policy to set the maximum permissions and IAM entity can get
+  * You can set that e.g. a user only has access to S3 in the boundary. Then even if they give themselves `AdministratorFullAccess` they still will only be able to access S3.
+  * This is helpful because you can set boundaries and then allow non-administrators (e.g. a project manager over some developers) to give access to things but they still can't grant more access than you want them to have. You could also allow e.g. developer to manage their own permissions
+  * Can also be used to restrict a specific user instead of applying a SCP that applies to the whole account
+
+* IAM Identity Center (used to be AWS Single Sign-On (SSO))
+  * Can use for all AWS account in AWS Organizations, Business accounts (Microsoft 365, Salesforce, etc.), SAML2.0-enabled applications, EC2 Windows Instances
+  * Identity providers
+    * Built-in provider
+    * 3rd party Active Directory, Okta, etc.
+  * Can use Permission Sets to grant access to groups of users to different OU's within AWS accounts
+  * Application Assignments allows user to access SAML 2.0 business apps
+  * Attribute-Based Access Control (ABAC) - uses fine-grained permissions based on user attributes stored in IAM Identity Center Identity Store
+    * example: title, locale
+    * Define permissions once, then modify AWS access by changing attributes on the user
+
+* AWS Directory Service - Provides a way to create Windows Active Directory in AWS
+   * AWS Managed Microsoft AD
+     * Create your own AD in AWS, manage users locally, supports MFA
+     * Establish "trust" connections with your on-prem AD
+   * AD Connector
+     * Acts as a proxy back to your on-prem AD by using a Directory Gateway, supports MFA
+     * All AD resources managed in on-prem AD
+   * Simple AD
+     * AD compatible managed directory on AWS
+     * Cannot be joined with on-prem AD, standalone
+       * Can by used for EC2 instances running Windows to join a domain
+   * **Exam may ask you VERY high level questions on this stuff like "We need to proxy AD user" - use AD connector, "We need to manage users on cloud and use MFA" - Managed Microsoft AD, "Just need to have windows domain for EC2, no MFA" - Simple AD**
+   * How to integrate IAM Identity center to AD
+     * If using AWS Managed Microsoft then you just connect to that and that's it
+     * If you have your own AD then either:
+       * Setup AWS Managed Microsoft AD (if you want to manage AD users in the cloud) by setting up a two way trust between your AD and the AWS Managed Microsoft AD
+       * Setup AD Connector to connect requests back to your AD (if you don't want to manage AD users on cloud)
+
+* AWS Control Tower
+  * Uses AWS Organizations  to secure and make compliant multi-account AWS environments
+  * Benefits:
+    * Automate setup of environments in a few clicks
+    * Automate ongoing policy management using guardrails
+    * Detect policy violations and remediate them
+    * Monitor compliance through an interactive dashboard
+  * Guardrails:
+    * Preventive Guardrail - uses SCP's (e.g. restrict regions to only specific ones account all accounts)
+    * Detective Guardrail - uses AWS Config to find non-compliance (i.e. identify untagged resources)
+      * Can fire SNS to notify or invoke Lambda which could then go remediate
+
+# KMS
+* Can auto key usage through CloudTrail ** may be on exam**
+* Two methods of Keys
+  * Symmetric (AES-256)
+    * Never get access to he KMS key unencrypted (you must call KMS API to use)
+  * Asymmetric (RSA & ECC key pairs)
+    * Public (encrypt) and Private Key (Decrypt) pair
+    * Used for Encrypt/Decrypt or Sign/Verify operations
+    * Public Key is downloadable but cannot access the private key unencrypted
+    * Use for encryption outside of AWS by users who can't call KMS API
+* Types of Keys
+  * AWS Owned Keys (free): SSE-S3, SSE-SQS, SSE-DDB (default key)
+  * AWS Managed Keys (free): aws/service-name, example: aws/rds or aws/ebs). Created to encrypt objects in services by default
+  * Customer Managed Keys created in KMS: $1/month
+  * Customer Managed Keys imported into KMS: $1/month
+  * + pay for API to KMS ($.03 / 10000 calls)
+* Automation Key rotation
+  * AWS-managed KMS key: automatic every 1 year
+  * Customer-managed KMS Keys(must be enabled): automatic and on-demand
+  * Imported KMS Keys: only manual rotation possible using alias
+* A KMS key cannot live in two regions so if you take an encrypted ebs volume, snapshot it into a S3 bucket (which uses the same KMS key), and then that bucket replicated to another region, KMS will re-encrypt with the new key in the new region, and then when the snapshot is restored in the new region it will be using the same new key.
+* Key Policies
+  * Similar to S3 bucket policies except you cannot control access to the key without the Key Policy
+  * Default Key Policy:
+    * Created if you don't provide specific KMS Key Policy
+    * Complete access to the key to the root user = entire AWS account
+  * Custom KMS Policy
+    * Define users/roles that can access the KMS key
+    * Define who can admin the key
+    * Useful for cross account access of the key
+* Copying snapshots across accounts:
+  * You make a snapshot using KMS and attached a Key Policy to authorize cross-account access, then share the encrypted snapshot.  In the target account you create a copy of the snapshot, encrypt it with a CMK in the target account and then create volume from the snapshot.
+* Multi-region Key
+  * Key is created in one region and sync'ed to other regions
+  * Use key id, key material, automatic rotation
+  * Encrypt in one region and decrypt in other regions
+  * They are NOT global (they are primary + replicas)
+  * each multi-region key is managed independently with it's own key policy
+  * Not recommended to use multi-region keys due to cost, compliance and management of replicating keys
+  * unless using for specific use cases like:
+    * Global client side encryption
+    * encryption on Global DynamoDB
+    * Global Aurora
+  * For instance you could have fields in DDB that are encrypted so that only the client can access them, not the DBA, and then that DDB table is a global table accessible from many regions
+* S3 Replication with Encryption
+  * Unencrypted objects and objects encrypted with SSE-S3 are replicated by default
+  * Objects encrypted with SSE-C can be replicated
+  * For objects encrypted with SSE-KMS you need to enable the option:
+    * Specify which KMS Key to encrypt objects with in target bucket
+    * Adapt KMS Key Policy for target key
+    * Create IAM Role is kms:Decrypt for the source KMS Key and kms:Encrypt for the target KMS Key
+    * You may get KMS throttling errors if you have a lot of objects to replicate, in which case you can ask for a service quote increase
+  * If you use multi-region keys, S3 will still treat them as single region and decrypt/re-encrypt when replicating
+* KMS Encrypted AMI Sharing **could be on test**
+  * AMI in Source account is encrypted with KMS key in source account
+  * modify image attribute to add `Launch Permission` which corresponds to the specified target AWS Account
+  * Must share the KMS Keys used to encrypt the snapshot the AMI references with target account/IAM role
+  * In target account, create IAM Role/User in target account must have permissions to `DescribeKey`, `ReEncrypt*`, `CreateGrant`, `Decrypt`
+  * When launching an EC2 instance from the AMI, optionally the target account can specify a new KMS key on it's own account to re-encrypt volumes
+
+# SSM Parameter Store
+* Serverless and scalable secure storage for config and secrets using KMS with version tracking
+* Notifications with EventBridge and integrates with CloudFormation
+* Can store params with a hierarchy
+* Tiers -  
+  * Standard - Free
+  * Advanced - $.05 per advanced param/month
+    * more parameters
+    * bigger size of parameters
+    * use parameter policies - e.g. assign TTL to expire/delete a param or send notifications to EventBridge on change or other details
+
+# AWS Secrets Manager
+* Newer service that lets you rotate secrets
+* Secrets are encrypted using KMS
+* **If you ever see "Secrets" and "RDS" on exam think "Secrets Manager"**
+* Secrets manager can replication secrets from one region to another and then promote a read replica secret to standalone
+
+# AWS Certificate Manager (ACM)
+* Private and public certificates
+* Free public TLS certificates
+* Automatic TLS cert renewal
+* Can use with ELB's, CloudFront, API Gateway 
+* CANNOT use with EC2 instances (certs can't be extracted)
+* Takes a few hours to verify a certificate (DNS or Email validation)
+* Public cert will be enrolled for automatic renewal 60 days before expiry
+* You can import a certificate created outside ACM, but these do not automatically renew, you must re-import new
+  * ACM sends daily expiration events starting 45 (configurable) data prior to expiration to EventBridge
+  * AWS Config has a managed rile `acm-certificate-expiration-check` to check for expiring certificates
+* If using with API Gateway the certificate must be:
+  * in the same region as CloudFront for edge-optimized
+  * in the same region as the API Gateway for Regional
+
+
+# Web Application Firewall (WAF)
+* Protects against Layer 7 exploits (HTTP)
+* Deploy on:
+  * ALB
+  * API Gateway
+  * CloudFront
+  * AppSync GraphQL API
+  * Cognito User Pool
+* **Common Exam trick is to try to get you to deploy to a NLB but that's not possible since that is lower layer**
+* Define Web ACL (Web Access Control List) Rules:
+  * IP Set - Up to 10k IP addresses, can use multiple rules for more
+  * HTTP headers, HTTP body, URI strings (SQL injection and Cross-Site Scripting XSS)
+  * Size contraints, geo-match (block countries)
+  * Rate based rules (to count occurrences of events) - for DDoS protection
+* Web ACL's are regional except for CloudFront (Global)
+* A rule group is a reusable set of rules you can add to web ACL
+  * Can be set to eval in specific order
+  * Can be set to allow/block for request that don't match rules
+* Fixed IP while using WAF with a Load Balancer 
+  * Since you can't use a NLB with a Fixed IP, you can use Global Accelerator to get a Fixed IP and WAF on ALB
+  
+# AWS Shield
+* Standard - Free and provides protection from SYN/UDP floods, Reflection attacks and other layer 3/layer 4 attacks
+* Advanced - Optional DDoS mitigation service ($3,000 per month per organization)
+  * Protects again more sophisticated attacks on EC2, ELB, CF, Global Accelerator & Route 53
+  * 24/7 AWS DDoS response team (DRP)
+  * Protect again higher fees due to DDoS
+  * automatically creates, evals and deploys WAF layer 7 rules
+
+# AWS Firewall Manager
+* Manage rules in all AWS Org accounts
+* Security policy: groups of security rules for:
+  * WAF
+  * Shield Advanced
+  * Security Groups for EC2, ALB and ENI
+  * Network Firewall (VPC Level)
+  * Route 53 Resolver DNS Firewall
+  * Policies are at region level
+* Rules are applied to new resources as they are created for future accounts in your Org
+* Price ($100) per policy
+* WAF vs Firewall Manager vs Shield
+  * Web ACL's defined in WAF
+  * For granular protection, WAF is your choice
+  * For WAF across multiple accounts, accelerate WAF config, automate protection of new resources, use Firewall Manager with WAF
+  * Shield is for additional feature on top of WAF for dedicated support and advanced reporting
+  * Shield Advanced to help against frequent DDoS
+
+# DDoS Best Practices (grouped by AWS into BP# resources)
+* BPs
+  * BP1 - CloudFront or Global Accelerator
+  * BP2 - AWS WAF
+  * BP3 - Route 53
+  * BP4 - API Gateway
+  * BP5 - VPC rules
+  * BP6 - ELB
+  * BP7 - ASG
+  * BP8 - Regions
+* Edge Location Mitigation (BP1, BP3) - Use Edge to distribute
+* Infrastructure layer defense (BP1, BP3, BP6) - provides layers to protection before it even gets to the backend
+* EC2 Auto Scaling (BP7) - Scale with sudden traffic increase
+* Load Balancing (BP6) - Distribute and scale with sudden traffic
+* Detect and filter malicious web requests (BP1, BP2) 
+  * CF blocks specific geographies, distributes
+  * WAF blocks IP's and filters requests
+* Shield Advanced (BP1, BP2, BP6) - automatic deploys WAF rules for layer 7 attacks
+* Obfuscate AWS Resources (BP1, BP4, BP6) - Hide backend resources
+* Security Groups and Network ACL's (BP5) 
+  * Security Groups and NACLs filter traffic by specific IP at subnet/ENI level
+  * Elastic IP protected by AWS Shield Advanced
+* Protect API endpoints (BP4) - header filter, API keys, hides backend Lambda/EC2, edge-optimized or regional CF mode
+
+# AWS GuardDuty
+* Uses ML to search logs for unusual things
+  * CloudTrail Event Logs - unusual API calls, unauthorized deployments
+  * CloudTrail Management Events - create VPC subnet, create trail
+  * CloudTrail S3 Data Events - get object, list object, delete object
+  * VPC Flow Logs - unusual internal traffic, IP addresses
+  * DNS Logs - compromised EC2 instances sending encoded data within DNS queries
+  * Optional Features - EKA Audit Logs, RDS/Aurora, EBS, Lambda, S3 Data Events, etc.
+* Can notify via EventBridge (which can target Lambda or SNS)
+* **May be on exam** has rules to protect against Cryptocurrency attacks
+
+# Amazon Inspector
+* Automated Security Assessments
+  * For EC2 it uses the AWS System Manager (SSM) agent which can analyze unintended network accessibility and OS vulnerabilities
+  * For container images push to ECR - Analyzes container images as they are pushed
+  * For Lambda Functions - Identifies software vulnerabilities in function code and package dependencies as they are deployed
+* Reports and integrates into AWS Security Hub
+* Send findings to EventBridge
+* Uses a CVE database for vulnerability checks
+* A risk score is associated with all vulnerabilities for prioritization
+
+# Amazon Macie - Data security and privacy service (PII)
+* Uses ML learning and pattern matching to discover and protect sensitive data in AWS
+* Can analyze a S3 bucket and then notify to EventBridge
+
+
+
+
+
+
+
+
+
+# Disaster Recovery in AWS
+* RPO - The maximum acceptable amount of data loss measured in time
+* RTO - The maximum acceptable downtime after a disaster
+* Disaster Recovery Strategies: The following are RPO and RTO decreases but money increases
+  * Backup And Restore - Cheap but high/long RPO
+    * Using AWS Snow or AWS Storage Gateway to copy to cloud
+    * Regular snapshots of RDS/RedShift/EBS 
+  * Pilot Light
+    * Small version of the app is always running in the cloud
+    * Faster than Backup and Restore as critical systems (e.g. RDS is already sync'ed and up) are already up (e.g. just have to turn on EC2/ECS instances and connect to RDS, change Route 53 records and you're up
+  * Warm standby
+    * Full system is up but at minimum size
+    * RDS is up and synced, EC2/ECS systems are up but set low with auto scaling
+    * ELB running to accept records
+    * Just update Route53 and the app will scale out to handle load
+  * Multi-Site/Host Site Approach
+    * Full production scale running and Active/Active between data centers so if one fails the other just picks up all the traffic
+  * All AWS Multi-Region
+    * Use Aurora Global and full production running in multiple regions
+* DR Tips:
+  * Backup
+    * EBS Snapshots, RDS automated backups
+    * Regular pushes to S3
+    * on-premise use AWS Snow or Storage Gateway
+  * High Availability
+    * Use Route 53 to migrate DNS over from Region to Region
+    * RDS Multi-AZ, ElastiCache Multi-AZ, EFS, S3
+    * Site to Site VPN as a recovery from Direct Connect
+  * Replication
+    * RDS Replication (Cross Region), AWS Aurora + Global DB
+    * Storage Gateway
+    * DB repl from on-prem to RDS
+  * Automation
+    * CloudFormation/Elastic Beanstalk to re-create a whole new environment
+    * Recover/Reboot EC2 instances with CloudWatch if alarms fail
+    * AWS Lambda function for customized automations
+  * Chaos
+    * Netflix has a "simian-army" randomly terminating EC2
+
+# Database Migration Service (DMS)
+* Source DB stays online during migration
+* Supports
+  * Homogeneous migrations e.g. Oracle to Oracle
+  * Heterogenous migrations e.g. SQL Server to Aurora
+* Continuous Data Replication using CDC
+* Must have a DMS (EC2) instance to perform repl tasks
+* AWS Schema Conversion Tool (SCT)
+  * Converts database schema from one engine to another (e.g. Oracle --> MySQL)
+  * Do not need to use if migrating same DB engine (on-prem postgres --> RDS postgres, it's not needed as it's same engine, just different platform) **part you need to know for the test**
+* If you want to have continuous repl of a on-prem DB to a different engine on AWS
+  * Implement a server on-prem with AWS SCT installed which syncs schema to the RDS
+  * then implement DMS to sync data from on-prem to RDS
+* Multi-AZ DMS deployment
+  * DMS instances in different regions which DMS maintains and synchronizes in case of AZ failure
+  * Used for Data Redundancy, eliminate I/O freezes, minimize latency spikes
+* RDS and Aurora MySQL Migrations
+  * RDS to Aurora Migration
+    * Option 1: DB Snapshot from RDS restored as Aurora DB (downtime)
+    * Option 2: Create Aurora RR from RDS and promote to it's own cluster when repl lag is 0 ($$)
+  * External to Aurora 
+    * MySQL
+      * Option 1: Percona XtraBackup to create file backup --> S3 then restore
+      * Option 2: Create Aurora MySQL DB and use mysqldump to migrate into Aurora (slower)
+    * PostgreSQL
+      * Create backup --> S3 then import with aws_S3 Aurora extension
+  * Use DMS if both databases are up and running
+
+# AWS On-prem strategy **Just need to know things related to on-prem for test**
+* Can download Amazon Linux 2 AMI as a VM (.iso)
+* VM Import/Export
+  * Migrate existing applications into EC2
+  * Create DR repo strategy for on-prem VM's
+  * Can export back the VM's from EC2 to on-prem
+* AWS Application Discovery Service
+  * Gather info about on-prem servers to plan migration
+  * Server util and dependency mappings
+  * Track with AWS Migration Hub
+* DMS
+* AWS Server Migration Service (SMS)
+  * Incremental repl of on-prem live server to AWS
+
+# AWS Backup
+* Fully managed service
+* No need to create custom scripts and manual processes
+* Supports cross-region AND cross-account
+* EC2/EBS, S3, RDS, Aurora, DynamoDB, Document DB, Neptune, EFS, FSx, Storage Gateway and more
+* Supports PITR for supported services
+* On-demand and scheduled backups
+* Tag based backup policies
+* Create backup policies known as Backup Plans
+  * Backup frequency (every 12 hours, daily, weekly, monthly, cron expression)
+  * Backup window
+  * Transaction to Cold Storage (Never, Days, Weeks, Months, Years)
+  * Retention Period (Always, , Days, Weeks, Months, Years)
+* You set up the service, select resources to backup and it backs up to S3
+* Backup Vault Lock Policy
+  * Enforce a WORM (Write Once Read Many)
+  * Protects against inadvertent or malicious delete operations
+  * Updates that shorten or alter retention periods
+  * Even root user cannot delete backups when enabled!
+* You can backup specific resources or all resources (and then filter by tags if desired)
+
+# AWS Application Discovery Service
+* Used to plan migration project from on-prem --> cloud
+* Agentless Discovery
+  * VM inventory, config, performance history such as CPU, memory, disk usage
+* Agent-base 
+  * System config, system performance, running processes, details of network connections between systems
+* Resulting data can be viewed within AWS Migration Hub
+
+# AWS Application Migration Service (MGN)
+* Lift-and-shift solution to convert physical, virtual and cloud-based servers to run natively on AWS
+* Install agent on-prem/any cloud and then it performans continuous replication from your apps and disks to EC2 instances and EBS volumes as a staging env, then you cut over and make the staging env production
+* Minimal downtime, reduced costs
+
+# Transferring large amounts of data into AWS
+* **On the test you may be asked how to transfer data the most reliably, the fastest, or the most quickly to setup:**
+* Site-to-Site VPN - can setup very quickly but transfer is the slowest (can take months for large data)
+* Direct Connect - Setup takes 1 month but then faster connection (few weeks compared to months of Site-to-site)
+* Snowball - 1 week to order, receive device, load it, send back
+* On-going repl: site-to-site VPN or DX with DMS or DataSync
+
+# VMWare Cloud on AWS
+* If you use VMWare Cloud to manage VM's you migrate to VMWare Cloud on AWS to keep using VMWare Cloud
+* You can run production workloads across VMWare vSphere based private, public and hybrid cloud environments
+* Has disaster recovery strategy
+* Once VMWare Cloud on AWS is in place, you can take advantage of other AWS resources

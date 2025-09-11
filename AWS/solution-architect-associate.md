@@ -1943,3 +1943,211 @@ No reason to remember all these (and probably know anyways), just need to know t
 * You can run production workloads across VMWare vSphere based private, public and hybrid cloud environments
 * Has disaster recovery strategy
 * Once VMWare Cloud on AWS is in place, you can take advantage of other AWS resources
+
+# Event processing in AWS
+* SQS --> Lambda - try to send, SQS retries, set up DLQ in SQS to remove after x retries since it will infinitely loop
+* SQS FIFO --> Lambda - try to send, SQS retries, set up DLQ in SQS to remove after x retries since it will block other messages (since it's in order)
+* SNS --> Lambda --> SQS - SNS sends async to Lambda, if lambda fails it retires, if x fails Lambda sends to SQS DLQ
+* Fan out - Instead of sending the same message to three SQS queues (which is subject to problems), send to SNS and that can send to multiple SQS
+* S3 Event Notifications - Send to SNS, SQS, Lambda on S3 Event (e.g. use Lambda to generate thumbnails) - set up per event
+* S3 Event Notifications to EventBridge - ALL events are sent - can filter with json rules, multiple destinations (FireHose, Kinesis Streams, etc), archive, replay, etc.
+* EventBridge Intercept API Calls - When API Call occurs CloudTrail triggers event to EventBridge which can send notification
+* AWS Service Integration with Kinesis Data Streams - API Gateway --> Kinesis Data Streams --> FireHose --> S3
+
+# Caching Strategies on AWS
+* You can cache on the edge in CloudFront, in the region with API Gateway, or back in your app logic with RDS/Redis (for example) - for dynamic content
+* You can cache on the edge in CloudFront from your S3 bucket - for static content
+* The farther in you go, the more the cost goes up, the more latency to the user
+* So you need to decide the best aching, TTL, Network, Computation, Cost and Latency for your needs
+* Basically there is a lot of ways to do caching on AWS but it's up to the scenario for what is going to be best use
+
+# Blocking IP Address in AWS
+* With Public Subnets, the NACL is your first line of defense, but you can optionally run a firewall on your EC2 instance (but this will incur CPU cost on the instance(s))
+* With Public Subnet with an ALB/NLB and EC2 is in private subnet - You have NACL on Public Subnet, filtering on the ALB/NLB, and then optional firewall on EC2
+  * You can also set up WAF on the ALB to extra filtering
+* For CloudFront --> Public Subnet w/ ALB --> Private Subnet with EC2 - Set up WAF on CloudFront, Geo Restrictions can also be on CloudFront but NACL's *CANNOT* be used because CloudFront sends all the traffic with the public IP's into your ALB, so you need to setup security on the ALB instead of NACL's
+
+# High Performance Computing (HPC)
+* Cloud is great for HPC because you can create a large number of resources quickly and speed up time to results by adding more, then only pay for what you have used
+* EC2 - Optimize for CPU, memory, use clusters in same rack, same AZ and spot instances for cheaper
+* Networking 
+  * EC2 Enhanced Networking (SR-IOV)
+    * Higher bandwidth, higher packets per second (PPS), lower latency
+    * Option 1 - Elastic Network Adapter (ENA) up to 100 Gbps
+    * Option 2 - Intel 82599 VF up to 10 Gbps (LEGACY)
+  * Elastic Fabric Adapter (EFA)
+    * Improved ENA for HPC, only works with Linux
+    * Great for inter-node communications, tightly coupled workloads
+    * Leverages Message Passing Interface (MPI) standard
+    * Bypasses underlying Linux OS to provide low-latency, reliable transport
+  * **It's quite common on exam to need to distinguish between ENI, ENA, EFA**
+* Review storage types (EBS, Instance Store, EFS, etc.) (FSx for Lustre is built for HPC!)
+* Automation and Orchestration
+  * AWS Batch
+    * multi-node parallel jobs which enable you to run single jobs that span multiple EC2 instances
+    * Easily schedule jobs and launch EC2 instances accordingly
+  * AWS ParallelCluster
+    * Open-source cluster management tool to deploy HPC on AWS
+    * Configure with text files
+    * Automate creation VPC, Subnet, cluster type and instance types
+    * Ability to enable EFA on the cluster (improves network performance) **Might be on the exam for what it does it do to enable EFA in the text files - it improves network performance**
+
+# EC2 High Availability
+* This section assumes that app cannot be spread across multiple instances (in which case a ALB would be used)
+* Elastic IP Address is attached to Public EC2 instance, cloudwatch event/alarm is set up to execute a lambda that can bring up another instance and move the elastic IP
+* We can also use a ASG and set it min 1, max 1 desired 1 in >= 2 AZ's and the EC2 instance has EC2 User Data (start script) that will attach the elastic IP (instance role must have allow API calls to attach elastic IP )
+* If the data is needed from the EBS volume, we can tell the ASG terminate lifecycle hook to tag a EBS snapshot + tags, the ASG will bring up a new instance, then the EBS volume is created from the snapshot and attached to the replacement instance
+
+# CloudFormation
+* If you use a service role for CloudFormation, it will use that for permissions instead of your own permissions. However in order to grant service role permissions to CloudFormation, the user needs to have the "iam:PassRole" permission, otherwise they cannot assign a role to CF
+
+# SES
+* Send and receive email for transactional, marketing and bulk email
+* Can use DomainKeys Identified Mail (DKMI) and Sender Policy Framework (SPF)
+* Flexible IP deployment: shared, dedicated and customer-owned IPs
+* Send emails using your application via AWS Console, APIs or SMTP
+* Provides stats such as email deliveries, bounces, feedback loop results, email open
+
+# Amazon Pinpoint
+* Inbound/outbound marketing communications service
+* Supports email, SMS, push, voice, and in-app messaging
+* Possibility to receive replies and process through SNS, FireHose, CloudWatch Logs
+* Scales to billions of messages per day
+* vs SNS & SES
+  * You have to manage each message audience, content and delivery schedule in SNS & SES
+  * In Pinpoint, you create message templates, delivery schedules, highly-targeted segments and full campaigns
+
+* SSM Session Manager
+* Instance access
+  * Can secure shell into EC2 and on-prem
+  * Port 22, SSH access, bastion hosts or SSH keys are not needed
+  * Supports Linux, macOS and Windows
+  * Send session log data to S3 or CloudWatch Logs
+  * Must put IAM role on the instance that allows SSM
+  * Other methods of connection: Open port 22 for SSH (need SSH keys) or use EC2 Instance Connect (no keys needed but still open port 22)
+* Run command
+  * Can run a command (script) against multiple instances (using resource groups) without need for SSH
+  * Command output can be shown in AWS Console, Sent to S3 bucket or CloudWatch Logs
+  * Send notifications to SNS about command status (In progress, Success, Failed)
+  * Integrated with IAM & CloudTrail
+  * Can be invoked by EventBridge
+* Patch Manager
+  * Automates patching of instances (OS updates, application updates, security updates)
+  * Supports EC2 and on-prem
+  * Linux, macOS, Windows
+  * patch on-demand or on schedule
+  * Scan instances and generate patch compliance report
+* Maintenance Windows - Set up schedules to perform patching, install software, reboot instance, etc.
+* Automation
+  * Create Automation runbooks which are SSM Document to define actions preformed on your EC2 instance or AWS resources
+  * Can be triggered using AWS Console, AWS CLI, EventBridge, on maintenance windows schedule or by AWS Config rule remediation
+
+# Cost Explorer
+* Can see breakdown of usage by hour in relation to cost
+* Get recommendations for savings plans with reserved instances
+* Forecast usage for up to 12 months
+
+# AWS Cost Anomaly Detection
+* Continuously monitors cost and usage using ML to detect unusual spends
+* Learns unique, historic spend patterns to detect one-time cost spikes and/or continuous cost increases (no need to set thresholds)
+* Monitors AWS services, member accounts, cost allocation tags or cost categories
+* Sends you anomaly detection report with root cause analysis
+* Get notified with individual alerts or daily/weekly summary (using SNS)
+
+# AWS Outposts
+* For companies that run Hybrid cloud, they have to have the skills to manage on-prem and cloud infra
+* In order to alleviate this, AWS Outposts is a server rack that can be brought to the on-prem location to leverage AWS services in your on-prem
+* You are responsible for physical security
+* Benefits:
+  * Low-latency access to on-prem systems
+  * Local data processing
+  * Data residency
+  * Easier migration from on-prem to the cloud
+  * Fully managed service
+* Services that work on Outposts
+  * EC2
+  * EBS
+  * S3
+  * EKS
+  * ECS
+  * RDS
+  * EMR
+
+# AWS Batch
+* Batch processing (job with start and end, not continuous) at any scale
+* Batch will dynamically launch EC2 instances or spot instance
+* AWS Batch provisions the right amount of compute/memory
+* batch jobs defined as Docker images and run on ECS
+* Batch vs Lambda
+  * Lambda
+    * Time limit
+    * limited disk space
+    * serverless
+  * Batch
+    * No time limit, any runtime as Docker images
+    * Relies on EC2 (can be managed by AWS)
+    * Relies on EBS/instance store for disk space
+
+# AWS AppFlow
+* Allows transfer of data from SaaS and AWS
+* Sources: Salesforce, SAP, Zendesk, Slack and ServiceNow
+* Destinations: AWS services like S3, RedShift, or non-AWS like SnowFlake or SalesForce
+* Frequency: on a schedule, in response to events, on-demand
+* Data Transformation: filtering and validation
+* Encrypted: over public internet or privately over AWS PrivateLink
+* Don't spend time writing integration and leverage APIs immediately
+
+# AWS Amplify
+* Set of tools to help you develop and deploy scalable full stack web and mobile applications
+* Authentication, Storage, API (RES, GraphQL), CI/CD, PubSub, Analytics, AI/ML Predictions, Monitoring
+* Connect your source code from GitHub, AWS CodeCommit, BitBucket, GitLab, or upload directly
+* Think of Amplify has the Elastic Beanstalk for Mobile and Web applications - a one stop shop
+
+# AWS Instance Scheduler
+* Deployed through CloudFormation (it's not a service, it's a CloudFormation template that you find on AWS website)
+  * Google "AWS Instance Schedule" for the template
+* Automatically stop/start AWS services to reduce costs (up to 70%)
+* Supports: EC2 instances, EC2 Auto Scaling Groups, RDS instances
+* Can do all sorts of stuff like take snapshot of RDS before shutting down, tag items, only during maintenance windows, etc.
+* Schedules are managed in DynamoDB Tables
+* Resource tags and Lambda to start/stop instances
+* Supports cross-account and cross-region resources
+
+# Well Architected Framework
+* Stop guessing your capacity needs
+* Test systems at production scale
+* Automate to make architectural experimentation easier
+* Allow for evolutionary architectures
+  * Design based on changing requirements
+* Drive architectures using data
+* Improve through game days
+  * Simulate applications for flash days
+* Pillars - not something to balance or trade-offs, they're synergy
+  * Operational Excellence
+  * Security
+  * Reliability
+  * Performance Efficiency
+  * Cost Optimization
+  * Sustainability
+* AWS Well-Architected Tool
+  * Free tool to review your architectures against the 6 pillars Well-Architected Framework and adopt architectural best practices
+  * You answers a bunch of questions about how you want to run your business and it provides recommendations at different priority levels
+
+# Trusted Advisor
+* No need to install anything, high level AWS account assessment
+* Analyze your AWS account(s) and provides recommendations on 6 categories
+  * Cost optimization
+  * performance
+  * Security
+  * Fault tolerance
+  * Service limits
+  * Operational Excellence
+* Business & Enterprise Support Plan
+  * Full Set of Checks
+  * Programmatic Access using AWS Support API
+
+
+# More information about solution architecture (resources to use when actually doing solution architecture)
+* These are some guides on how to setup architecture for different solutions, you can search for what you are trying to do and find solution instructions, diagrams and even cloudformation templates
+* [https://aws.amazon.com/architecture](https://aws.amazon.com/architecture)
+* [https://aws.amazon.com/solutions](https://aws.amazon.com/solutions)

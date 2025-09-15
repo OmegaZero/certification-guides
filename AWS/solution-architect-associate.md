@@ -1808,13 +1808,271 @@ No reason to remember all these (and probably know anyways), just need to know t
 * Uses ML learning and pattern matching to discover and protect sensitive data in AWS
 * Can analyze a S3 bucket and then notify to EventBridge
 
+# CIDR/Public/Private IP's
+* what is private? 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16; public - everything else
+* Understand CIDR (0.0.0.0/0 = all IP's, X.Y.Y.Y/8, X.X.Y.Y/16, X.X.X.Y/24, X.X.X.X/32) - Only Y is editable with that slash form
+
+# VPC
+* Default VPC
+  * Should not use ideally, it's set up to make it easy for AWS beginners to work but if you keep using it you will have conflicts between accounts
+  * By default, NACL allows all traffic IN and OUT
+  * IGW allows all traffic out
+  * Uses 172.31.0.0/16
+  * Route table is implicitly assigned to three subnets (172.31.0.0/20, 172.31.16.0, 172.31.32.0/20)
+* Max 5 VPC's per region (soft limit, can be increased)
+* Max CIDR per VPC is 5
+  * Min CIDR is /28, Max is /16
+
+# Subnets
+* AWS reserves 5 IP address (first 4 and last 1) in each subnet) - you cannot use them
+  * .0 - Network Address
+  * .1 - VPC router
+  * .2 mapping to Amazon-provided DNS
+  * .3 future use
+  * .255 - Network Broadcast Address (AWS does not support broadcast in a VPC so the address is reserved)
+* **So if exam asked for what subnet if you need 29 IP addresses, you can't use /27 (32 IP addresses = 2^5) because you would only have 27 available - you would need a /26 (2^6 = 64)**
+* You can set "Enabled auto-assign public IPv4 address" (which you should set on your public subnets) and when you do this and then make a EC2 instance in your public subnet, by default it will get a public ipv4.
+
+# Internet Gateways
+* Only 1 Internet can be connected to one VPC (and vice-versa)
+* Internet Gateway by itself does not allow internet access, you must also set up the route table
+
+# Bastion Host
+* Instance that is in your public subnet that the security group in the private subnet allows (i.e. BastionHostSG hold the Bastion Host and DatabaseSG allows it in).  
+* You allow port 22 from the internet to the Bastion Host security group, connect to the Bastion Host, then use that to connect to instances in your private subnet (instead of putting those hosts on the public internet just so you can get to them). So in our example DatabaseSG allows port 22 from BastionHostSG.
+
+# NAT
+## NAT Instance (outdated but still might be on the exam)
+* Has a Elastic IP
+* Must disable Source/Destination check on EC2 because the NAT Instance is sending traffic back from the internet while setting the source as the external IP, even though it comes from the NAT Instance (it spoofs the source IP).
+* Route table must be configured to send traffic from private subnet to the NAT Instance
+* Pre-configured Amazon Linux AMI is available
+* Reached end of standard support on December 31, 2020
+* Not highly available/resilient setup out of box
+  * You need to create a ASG in multi-AZ + resilient user-data script
+* Internet traffic bandwidth depended on EC2 instance type
+* You had to manage Security Groups/rules
+
+## NAT Gateway
+* AWS Managed NAT, higher bandwidth, HA, no admin
+* Pay per hour for usage and bandwidth
+* NATGW is created in a specific AZ, uses Elastic IP
+  * You need to create multiple NAT gateways in multiple AZ's for fault tolerance
+* Can't be used by EC2 instance in the same subnet (only from other subnets)
+* Requires an IGW
+* 5 Gbps bandwidth w/ auto scaling to 100 Gbps
+* No security groups to manage/required
+
+## NAT Instance vs NAT GW
+* **Exam will ask you to choose between NAT Instance and NAT gateway**
+* NAT GW is cheaper (not having to pay for instance type + size AND network costs)
+* Bandwidth on NATGW does not depend on instance size
+* Cannot use NATGW as a Bastion Host (unlike NAT Instance)
+* NAT Instance needs scripts for failover between instances if AZ goes down, NATGW is HA
 
 
+# NACL's
+* NACL's are stateless and have to be specified for inbound and for outbound on every connection
+* One NACL per subnet, new subnets are assigned the default NACL
+* You define NACL Rules
+  * Rules 1 - 32766 - the lower the number the higher the precedence 
+  * The first rule match will drive decision
+    * i.e. ALLOW #100 and DENY #200, allow wins
+  * The last rule is * deny
+  * AWS recommends adding rules by increment of 100
+* Newly created NACL's deny everything by default
+* NACL are great way of blocking specific IP at the subnet level
+* Default NACL allows all traffic and in and
+* Good practice is to not change the default NACL but instead create a new NACL and edit that
+* **If the exam mentions using default NACL, just keep in mind it allows everything**
+* Ephemeral Posts are high range ports that a client opens to accept a response after sending a request to a fixed destination server port (don't need to remember these, just for example)
+  * Windows - 49125 - 65535
+  * Linux - 32765 - 60999
+  * When request is sent the source destination and source port (ephemeral) is sent so that server can reply
+* When configuring NACL's, you need to allow outbound from 1024-65535 and inbound (only for known IPs!) from 1024-65535 for ephemeral ports 
 
+# NACL vs Security Groups
+* Security Groups operate at instance level, NACL's are at subnet level
+* Security Groups are allow only, NACL's are allow and deny
+* NACL are stateless, SG's are stateful
+* SG - All rules evaled before deciding, NACL - first matching rule wins
+* SG - Applies to EC2 instance when specified, NACL - applies to all EC2 instance in that subnet
 
+# VPC Peering
+* Makes two VPC's act like they are in the same network
+* Must not have overlapping CIDR's
+* NOT transitive (each VPC must have one to each other, You can't go from VPC A --> B --> C)
+* Must update route tables in EACH VPC's subnets
+* Can create connection from one account to another and different regions
+* Can reference security groups in a peered VPC (works cross account - same region)
 
+# VPC Endpoints
+* Makes it so that a VPC can talk directly to a AWS Service
+* every AWS service is publicly exposed (public URL)
+* VPC Endpoints allow you to connect to AWS services using a private network instead of the public internet
+* Redundant and scale horizontally
+* remove the need of a IGW, NATGW and multiple hopes for a resource to go through to hit a AWS service (via the public internet)
+* In case of issues 
+  * check DNS setting resolution in your VPC
+  * Check Router Tables
+* Endpoint types 
+  * Interface Endpoints (Powered by PrivateLink)
+    * Provisions an ENI (private Ip address) as an entry point (must attach SG)
+    * $ per hour + $ per GB per second
+  * Gateway Endpoints
+    * Provisions a gateway and must be used as a target in a route table (does not use security groups)
+    * Supports S3 and DynamoDB ONLY
+    * Free
+  * **On the exam, they will almost always want the gateway endpoint because you just have to set the route table and it's free. The only time they may want the interface endpoint is if you are using on-prem like Site-to-Site (S2S VPN), Direct Connect or if you want to connect from another VPC through this endpoint**
 
+# VPC Flow Logs
+* Captures info about IP traffic going into your interfaces
+  * VPC Flow Logs  
+  * Subnet Flow Logs
+  * Elastic Network Interface (ENU) Flow Logs
+* Helps to monitor & troubleshoot connectivity issues
+* Flow logs data can go to S3, CloudWatch Logs and Kinesis Data Firehose
+* Captures network information from AWS managed interfaces too: ELB, RDS, ElastiCache, Redshift, Workspaces, NATGW, Transit Gateway...
+* Can use Athena on S3 or CloudWatch Insights if you stream them
+* Fields show you for instance the source/dest IP and port, the action taken (`ACCEPT`/`REJECT`) and other information about the request
+* If you have a flat reject on the initial inbound or outbound then it could be NACL or SG. If you have an accept one way but the response request is `reject` then it's NACL
+* You can setup VPC Flow Logs to go to CloudWatch Logs and then 
+  * use CloudWatch contributor Insights to list the Top 10 IP addresses
+  * Set up a metric filter and a CloudWatch Alarm if there is a high uptick in SSH or RDP attempts/traffic then alert to SNS
+* Or you can send them to a S3 Bucket then user Athena with Amazon QuickSight
 
+# Site-to-Site VPN
+* Virtual Private Gateway (VGW)
+  * VPN Concentrator on the AWS side of the VPN connection
+  * VGW is created and attached to the VPC from which you want to create the Site-to-Site-VPN
+  * Possible to customize the Autonomous System Number (ASN)
+* Customer Gateway (CGW) **the stuff below can be on the exam**
+  * Software app of hardware device on the customer side of VPN connection
+    * Public Internet-routable IP address for your Customer Gateway device
+    * if behind a NAT device that enabled for NAT traversal (NAT-T), use the public IP of that NAT device
+    * You must enable route propagation for the VPG in the route table that is associated with your subnets
+    * If you need to ping your EC2 instances from on-prem, make sure you enabled ICMP in your SG for your instances
+* AWS VPN CloudHub
+  * You can connect multiple CGW's to the VGW and then use those to have communication between multiple customer on-prem networks (uses the VGW as the hub and the CGW's as the spokes)
+  * To set up, connection multiple VPN connections on the same VGW, setup dynamic routing and configure route tables
+* In order to create a site-to-site connection you must first create a customer gateway and and VGW
+
+# Direct Connect (DX)
+* Provides a dedicated private connection from remote network to your VPC
+* Must set up Virtual Private Gateway on your VPC
+* Use cases:
+  * Increased bandwidth throughput - working with large data sets - lower cost to moving all that data
+  * More consistent network experience - applications using real-time data feeds
+  * Hybrid environments (on-prem + cloud)
+* First thing that is set up is a AWS Direct Connect Location which houses an AWS Direct Connect Endpoint (in a AWS cage) and a Customer or partner router (in a customer or partner cage)
+* Then on-prem connects to the customer or partner router at the DX Location, that has vlan between the AWS Direct Connect Endpoint and the Customer or partner router, and then the AWS Direct Connect Endpoint connects to the Virtual Private Gateway (for VPC resources) and/or the public virtual interface (for public resource like S3)
+* If you need to connect to VPC's in multiple regions, you need to use a `Direct Connect Gateway` from the Private Virtual Interface and this will connect to Private Virtual interfaces in each VPC
+* Connection Type
+  * Dedicated Connections: 1 Gbps, 10 Gbps, 100 Gbps
+    * Physical ethernet port dedicated to a customer
+    * Request made to AWS first, then completed by AWS DX Partners
+  * Hosted Connection: 60 Mbps, 500 Mbps, 10 Gbps
+    * Connection request are made via AWS DX Partners
+    * Capacity can be added or removed on demand
+    * 1,2,5,10 Gbps available at select AWS DX Partners
+* Lead Times to get DX working are often longer than 1 month so it the exam says we need to get a connection to send data within a few weeks AND DX is not already established, then they aren't talking about DX**     
+* Encryption
+  * DX is not encrypted but is private
+  * If you want encryption you can set up a VPN connection between the Customer/Partner router and the AWS Direct Connect Endpoint which gives you IPsec but it's more complicated to put in place
+* Resiliency
+  * High Resiliency for Critical Workloads - Multiple DX Locations, each with their own DX Endpoint
+  * Maximum Resiliency for Critical Workloads - Multiple DX Locations AND each location has two DX Endpoints
+    * **MAXIMUM** is the term they use in the exam to describe what to work with
+    * Maximum resilience is achieved by separate connections terminating on separate devices in more than one location
+* If you have a DX connection and it fails, you can fail over to a backup DX (expensive) or use Site-to-Site VPN
+
+# Transit Gateway
+* Hub and spoke connections where the Transit Gateway serves as the hub and VPC's (can be in different regions, different accounts), DX Gateways, VPN connections, all can talk to each other
+* Transit Gateway can have transitive peering
+* Route tables limit which VPC can talk to which other VPC
+* Share cross account using Resource Access Manager (RAM)
+* Supports **IP Multicast** (*Is the ONLY AWS Service that supports IP Multicast so if you see this it must mean Transit Gateway**)
+* You can use ECMP: Equal-cost multi-path routing with a Transit Gateway which allows you to use multiple Site-to-Site VPN's to increase the max bandwidth 
+  * You normally only have a single S2S VPN which uses 2 tunnels, one for receiving and one for sending - each having 1.25 Gbps
+  * If you implement ECMP, you can get 1.25 Gbps for each tunnels so 2.5 Gbps total for a single VPN connection
+  * You can increase the amount of VPN connections to get more bandwidth as well (2.5 Gbps * # of connections)
+* You pay per GB of data that goes through the TGW (so using ECMP can get expensive)
+* You can also use Transit Gateway with DX.  In this case the Transit Gateway talks to the Direct Connect Gateway which talks to the Direct Connection endpoint with t a Transit VIF.  
+
+# VPC - Traffic Mirroring
+* Allows you to capture and inspect network traffic in your VPC
+* Route traffic to security appliances you manage
+* Capture the traffic
+  * From (Source) - ENIs
+  * To (Targets) - an ENI or NLB
+* You set up VPC Traffic Mirroring which will duplicate the packets from your EC2 instance as they are sent to the ENI
+* This presents no overhead for the ENI (Network bandwidth)
+* You can then send the traffic to e.g. a NLB that is on a ASG of EC2 instances with a security software
+* This allows you to capture all packets OR you can filter the packets (optional) with the VPC Mirroring
+* Source and Target can be in the same VPC or different VPCs (VPC Peering)
+* Use cases: content inspection, threat monitoring, troubleshooting
+
+# IPv6 for VPC
+* Every IPv6 address in AWS is public and Internet-routable (there is no private range)
+* You cannot disable IPv4 for VPC's and subnets, but you can enable dual-stack mode so that instances get at least a private internal IPv4 and a public IPv6
+* They can communicate using either IPv4 or IPv6 to the internet through an Internet Gateway
+* If you cannot launch a EC2 instance in your subnet, it's not because there is no IPv6 left, but because there is no IPv4 left
+  * solution: create a new IPv4 CIDR in your subnet
+* When you add a IPv6 CIDR to your subnet, you can select "CIDR controlled by AWS" and CODR owned by me". If you select the former, it will only give you 248 IPv6 addresses, so you will need to add more IPv6 CIDR's if you run out.
+
+# Egress-only Internet Gateway
+* Similar to NAT Gateway but for IPv6
+* Allows private subnets to access internet but not let traffic from the internet in
+* So for Public subnets we set 0.0.0.0/0 and ::/0 to go to the internet gateway to go out
+* For Private subnets we set 0.0.0.0/0 to go to the nat gateway and ::/0 to go to the egress only internet gateway (which sits on the same level in your VPC as the Internet gateway, unlike NAT gateway which sits in your public subnet)
+
+# Networking costs
+* Traffic into your EC2 instance is free
+* Traffic between EC2 instances in the same AZ using Private IP is $.01
+* Traffic between EC2 instances in different AZ's (same region) using private IP's is $0.1
+* Traffic between EC2 instances in different AZ's (same region) using public IP's is $0.2 (so don't do this, ensure you are using private)
+* Traffic across regions is $.02
+* Use the same AZ for maximum savings, although lose HA.  **Exam questions might ask about setting up e.g. RDS read replica for the cheapest, you want them in the same AZ using private IP**
+* Minimize egress traffic
+  * Egress = AWS --> outside; Ingress outside --> AWS
+  * e.g. Move applications inside AWS and only return query results (50KB) to user instead of sending ALL the DB data (100MB) to an app on prem and then querying
+* Direct Connect location should be co-located in the same AWS Region for lower cost egress
+* S3
+  * Internet --> S3 = free; S3 --> internet = $.09/GB
+  * S3 Transfer Acceleration gives 50% to 500% faster transfer times but costs $.04-$.08 per GB more
+  * CloudFront
+    * S3 to CloudFront is free
+    * CloudFront to Internet = $0.85/GB (slightly cheaper than S3)
+      * Caching capability (lower latency)
+      * Reduce costs associated with S3 requests pricing (7x cheaper w/ CloudFront)
+  * S3 Cross Region Replication = $0.2/GB
+* NAT Gateway vs Gateway VPC Endpoint
+  * If you for instance use a EC2 Instance --> NAT Gateway --> Internet Gateway --> Internet --> S3 then you will pay
+    * $.045 NAT Gateway/hour
+    * $.045 NAT Gateway data processed /GB
+    * $.09 Data transfer out to S3 (cross region)
+    * $.00 Data transfer out to S3 (same region)
+  * If you instance just use EC2 Instance --> VPC Endpoint --> S3 you just pay
+    * No cost for Gateway Endpoint
+    * $.01 data transfer in/out (same region)
+  
+# AWS Network Firewall
+* Protects entire VPC from Layer 3 to Layer 7
+* Any direction, you can inspect: 
+  * VPC to VPC traffic
+  * Outbound to internet
+  * Inbound from internet
+  * To/From Direct Connect & S2S VPN
+* Internally, the Network Firewall uses the AWS Gateway Load Balancer
+* Rules can be centrally managed cross-account by AWS Firewall Manager to apply to many VPC's
+* Supports 1000s of rules
+  * IP & Port 
+  * Protocol
+  * Stateful domain list rule groups (e.g. only allow traffic to *.mycorp.com)
+  * General pattern matching using regex
+* Traffic filtering: Allow, drop or alert for the traffic that matches the rules
+* Active flow inspection to protect against network threats with intrusion-prevention capabilities (like GLB but managed by AWS)
+* Send logs of rule matches to S3, CloudWatch Logs, Firehose
 
 # Disaster Recovery in AWS
 * RPO - The maximum acceptable amount of data loss measured in time
@@ -2145,7 +2403,6 @@ No reason to remember all these (and probably know anyways), just need to know t
 * Business & Enterprise Support Plan
   * Full Set of Checks
   * Programmatic Access using AWS Support API
-
 
 # More information about solution architecture (resources to use when actually doing solution architecture)
 * These are some guides on how to setup architecture for different solutions, you can search for what you are trying to do and find solution instructions, diagrams and even cloudformation templates
